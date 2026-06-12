@@ -460,15 +460,11 @@ export function generateButtonModule(seed: number): ButtonModuleConfig {
     releaseImmediatelyRules = pickN(rng, nonMatching, 2);
   }
 
-  // Strip rules are observed only during hold — independent of which rule wins.
+  // Strip rules are observed only during hold — independent of which rule
+  // wins. Always reference the timer's ONES digit so the wait is at most 10s.
   const stripRules = stripColors.map((stripColor) => ({
     stripColor,
-    releaseDigitPosition: pick(rng, [
-      "ones",
-      "tens",
-      "hundreds",
-    ] as const),
-    releaseValue: Math.floor(rng() * 5), // 0-4
+    releaseValue: Math.floor(rng() * 10), // 0..9
   }));
 
   const actualStripColor = pick(rng, stripColors) as StripColor;
@@ -495,21 +491,8 @@ export function checkReleaseTiming(
     (r) => r.stripColor === config.actualStripColor
   );
   if (!rule) return false;
-
-  const seconds = timerSecondsRemaining % 60;
-  const minutes = Math.floor(timerSecondsRemaining / 60);
-  const ones = seconds % 10;
-  const tens = Math.floor(seconds / 10);
-  const hundreds = minutes % 10;
-
-  const target =
-    rule.releaseDigitPosition === "ones"
-      ? ones
-      : rule.releaseDigitPosition === "tens"
-      ? tens
-      : hundreds;
-
-  return target === rule.releaseValue;
+  const ones = timerSecondsRemaining % 10;
+  return ones === rule.releaseValue;
 }
 
 export function generateSerialNumber(seed: number): string {
@@ -571,11 +554,9 @@ export function getButtonAction(
 export function getStripReleaseTiming(
   config: ButtonModuleConfig,
   stripColor: StripColor
-): { position: string; value: number } {
+): { value: number } {
   const rule = config.stripRules.find((r) => r.stripColor === stripColor);
-  if (!rule)
-    return { position: "ones", value: 1 };
-  return { position: rule.releaseDigitPosition, value: rule.releaseValue };
+  return { value: rule?.releaseValue ?? 0 };
 }
 
 // Generate manual pages from the same configs
@@ -612,7 +593,7 @@ export function generateManualPages(seed: number): ManualPage[] {
 
   const stripRows = buttonConfig.stripRules.map((r) => [
     r.stripColor.toUpperCase(),
-    `Release when ${r.releaseDigitPosition} digit = ${r.releaseValue}`,
+    `Release when the timer's last digit is ${r.releaseValue}`,
   ]);
 
   const buttonPage: ManualPage = {
@@ -650,30 +631,27 @@ export function generateManualPages(seed: number): ManualPage[] {
     ],
   };
 
-  const symbolCount = seed % 3 === 0 ? 2 : 1;
-  const symbolsPages = Array.from({ length: symbolCount }, (_, i) => {
-    const cfg = generateSymbolsModule(seed + i * 77777);
-    const label = symbolCount > 1 ? ` ${i + 1}` : '';
-    return {
-      moduleType: 'symbols' as const,
-      title: `SYMBOLS MODULE${label}`,
-      sections: [
-        {
-          heading:
-            'Find the column that contains all four symbols on the bomb. Press them in the order they appear in that column, top to bottom.',
-          content: [
-            { type: 'symbolColumns' as const, columns: cfg.columns },
-          ],
-        },
-      ],
-    };
-  });
+  // One symbols-module entry per bomb, regardless of how many symbols
+  // modules the bomb has. They all share the same column reference.
+  const sharedColumns = generateSymbolsColumns(seed);
+  const symbolsPage: ManualPage = {
+    moduleType: 'symbols' as const,
+    title: 'SYMBOLS MODULE',
+    sections: [
+      {
+        heading:
+          'Find the column that contains all four symbols on the bomb. Press them in the order they appear in that column, top to bottom.',
+        content: [
+          { type: 'symbolColumns' as const, columns: sharedColumns },
+        ],
+      },
+    ],
+  };
 
   // Shuffle page order per bomb so the Expert can't memorize section
-  // positions across rounds. Uses a sub-seed so it's deterministic for a
-  // given bomb (defuser and expert see the same order).
+  // positions across rounds.
   const orderRng = mulberry32(seed + 31337);
-  const all: ManualPage[] = [wirePage, buttonPage, ...symbolsPages];
+  const all: ManualPage[] = [wirePage, buttonPage, symbolsPage];
   return [...all].sort(() => orderRng() - 0.5);
 }
 
@@ -771,55 +749,67 @@ function generateGlyphPaths(rng: () => number): string[] {
   return paths;
 }
 
-export function generateSymbolsModule(seed: number): SymbolsModuleConfig {
+// Generate the SHARED column layout that every symbols module on a bomb sees
+// in the manual. One bomb → one column layout → one manual page (even if the
+// bomb has multiple symbols modules with different actives).
+export function generateSymbolsColumns(seed: number): GeneratedSymbol[][] {
   const rng = mulberry32(seed + 55555);
 
   const columnCount = 6 + Math.floor(rng() * 3); // 6..8
-  const columnSizes = Array.from({ length: columnCount }, () =>
-    5 + Math.floor(rng() * 4)
-  ); // 5..8 per column
+  const COLUMN_HEIGHT = 7;
+  const columnSizes = Array.from({ length: columnCount }, () => COLUMN_HEIGHT);
 
-  // A shared pool of unique glyphs. Columns SAMPLE from this pool, so the same
-  // symbol routinely appears in multiple columns — that's what makes the puzzle
-  // non-trivial: the expert can't match a single symbol to a single column.
+  // Pool of unique glyphs. Columns repeat symbols across columns so the
+  // expert can't match a single symbol to a single column.
   const poolSize = 18 + Math.floor(rng() * 6); // 18..23
   const pool: GeneratedSymbol[] = Array.from({ length: poolSize }, (_, i) => ({
     id: `${seed}-${i}`,
     paths: generateGlyphPaths(rng),
   }));
 
-  // Pick the 4 active symbols (the ones that will appear on the bomb)
-  const actives = [...pool].sort(() => rng() - 0.5).slice(0, 4);
-  const activeIds = new Set(actives.map((s) => s.id));
-  const fillers = pool.filter((s) => !activeIds.has(s.id));
-
-  // Exactly one column gets ALL 4 active symbols — that's the solution column.
-  const winnerIdx = Math.floor(rng() * columnCount);
-
-  const columns: GeneratedSymbol[][] = columnSizes.map((size, i) => {
-    let activesInCol: GeneratedSymbol[];
-    if (i === winnerIdx) {
-      activesInCol = [...actives];
-    } else {
-      // Non-winner: 1..3 of the actives (never all 4, otherwise it'd also
-      // satisfy the solution). 1+ guarantees the actives appear in multiple
-      // columns so the expert can't shortcut.
-      const k = 1 + Math.floor(rng() * 3);
-      activesInCol = [...actives].sort(() => rng() - 0.5).slice(0, k);
-    }
-    // Fill remaining slots with random unique fillers from the pool.
-    const fillersNeeded = size - activesInCol.length;
-    const colFillers = [...fillers]
-      .sort(() => rng() - 0.5)
-      .slice(0, fillersNeeded);
-    // Final column order is also shuffled so the actives aren't grouped at top
-    return [...activesInCol, ...colFillers].sort(() => rng() - 0.5);
+  return columnSizes.map((size) => {
+    return [...pool].sort(() => rng() - 0.5).slice(0, size);
   });
+}
 
-  // Bomb shows the 4 actives in a random visual order.
-  const bombActiveSymbols = [...actives].sort(() => rng() - 0.5);
+// Pick the 4 active symbols for a single symbols-module instance from a
+// shared column layout. Uses rejection sampling so exactly one column
+// contains all 4 actives (the "winner"). Multiple modules can use the same
+// columns and each one will have its own uniquely-identifying winner.
+export function generateSymbolsModule(
+  seed: number,
+  sharedColumns?: GeneratedSymbol[][]
+): SymbolsModuleConfig {
+  const columns = sharedColumns ?? generateSymbolsColumns(seed);
+  const rng = mulberry32(seed + 99119);
 
-  return { columns, activeSymbols: bombActiveSymbols };
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const winnerIdx = Math.floor(rng() * columns.length);
+    const winner = columns[winnerIdx];
+    if (winner.length < 4) continue;
+    const actives = [...winner].sort(() => rng() - 0.5).slice(0, 4);
+    const activeIds = new Set(actives.map((s) => s.id));
+
+    // Validate uniqueness — no OTHER column may also contain all 4
+    let unique = true;
+    for (let i = 0; i < columns.length && unique; i++) {
+      if (i === winnerIdx) continue;
+      let hits = 0;
+      for (const s of columns[i]) if (activeIds.has(s.id)) hits++;
+      if (hits === 4) unique = false;
+    }
+    if (unique) {
+      return {
+        columns,
+        activeSymbols: [...actives].sort(() => rng() - 0.5),
+      };
+    }
+  }
+
+  // Fallback (extremely unlikely): just take the first column's first 4.
+  const winner = columns[0];
+  const actives = winner.slice(0, 4);
+  return { columns, activeSymbols: [...actives].sort(() => rng() - 0.5) };
 }
 
 // Solution = the 4 active symbols ordered by their position in the column

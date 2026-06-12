@@ -5,6 +5,7 @@ import {
   generateWireModule,
   generateButtonModule,
   generateSymbolsModule,
+  generateSymbolsColumns,
   generateSerialNumber,
   getWireSolution,
   getButtonAction,
@@ -53,12 +54,17 @@ export const createGame = createServerFn({ method: "POST" })
       "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'button', 1, ?)",
       [nanoid(), gameId, JSON.stringify(buttonConfig)]
     );
+    // All symbols modules on a bomb share the SAME columns (one manual page
+    // covers all of them). Each module's activeSymbols are unique to it.
     const symbolCount = seed % 3 === 0 ? 2 : 1;
-    for (let i = 0; i < symbolCount; i++) {
-      db.run(
-        "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'symbols', ?, ?)",
-        [nanoid(), gameId, 2 + i, JSON.stringify(generateSymbolsModule(seed + i * 77777))]
-      );
+    if (symbolCount > 0) {
+      const sharedColumns = generateSymbolsColumns(seed);
+      for (let i = 0; i < symbolCount; i++) {
+        db.run(
+          "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'symbols', ?, ?)",
+          [nanoid(), gameId, 2 + i, JSON.stringify(generateSymbolsModule(seed + i * 77777, sharedColumns))]
+        );
+      }
     }
 
     // Creator starts as Defuser.
@@ -288,11 +294,14 @@ export const restartGame = createServerFn({ method: "POST" })
       [nanoid(), data.gameId, JSON.stringify(buttonConfig)]
     );
     const symbolCount = newSeed % 3 === 0 ? 2 : 1;
-    for (let i = 0; i < symbolCount; i++) {
-      db.run(
-        "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'symbols', ?, ?)",
-        [nanoid(), data.gameId, 2 + i, JSON.stringify(generateSymbolsModule(newSeed + i * 77777))]
-      );
+    if (symbolCount > 0) {
+      const sharedColumns = generateSymbolsColumns(newSeed);
+      for (let i = 0; i < symbolCount; i++) {
+        db.run(
+          "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'symbols', ?, ?)",
+          [nanoid(), data.gameId, 2 + i, JSON.stringify(generateSymbolsModule(newSeed + i * 77777, sharedColumns))]
+        );
+      }
     }
 
     return { ok: true as const };

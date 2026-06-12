@@ -66,7 +66,7 @@ export interface ButtonImmediateRule {
 
 export interface StripRule {
   stripColor: StripColor;
-  releaseDigitPosition: "ones" | "tens" | "hundreds";
+  // The timer's ONES digit (0–9). The hold puzzle resolves in <10 seconds.
   releaseValue: number;
 }
 

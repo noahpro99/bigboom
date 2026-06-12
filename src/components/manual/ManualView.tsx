@@ -157,17 +157,19 @@ function PageArrow({
 }) {
   const Icon = dir === "prev" ? ChevronLeft : ChevronRight;
   return (
-    <div className="shrink-0 w-12 flex">
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        aria-label={dir === "prev" ? "Previous page" : "Next page"}
-        className={`sticky top-1/2 -translate-y-1/2 self-start w-12 h-20 flex items-center justify-center transition-all group z-10 ${
-          disabled
-            ? "opacity-20 cursor-default"
-            : "hover:bg-ink/8 active:bg-ink/12 cursor-pointer"
-        }`}
-      >
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={dir === "prev" ? "Previous page" : "Next page"}
+      className={`shrink-0 self-stretch w-12 flex items-center justify-center transition-all group z-10 ${
+        disabled
+          ? "opacity-20 cursor-default"
+          : "hover:bg-ink/8 active:bg-ink/12 cursor-pointer"
+      }`}
+    >
+      {/* Sticky inner so the icon stays vertically centered in the viewport
+         while the page text scrolls and the button hit-area fills the column */}
+      <span className="sticky top-1/2 -translate-y-1/2 flex items-center justify-center">
         <Icon
           size={28}
           strokeWidth={2.25}
@@ -175,8 +177,8 @@ function PageArrow({
             disabled ? "" : "group-hover:text-ink group-hover:scale-110"
           } transition-all`}
         />
-      </button>
-    </div>
+      </span>
+    </button>
   );
 }
 
@@ -230,7 +232,7 @@ function ResponsiveTable({
             {row.map((cell, ci) => (
               <div
                 key={ci}
-                className="px-3 py-2.5 font-serif text-[13px] sm:text-sm leading-snug border-r border-ink/12 last:border-r-0 break-words"
+                className="px-2.5 py-1.5 font-serif text-[13px] sm:text-sm leading-tight border-r border-ink/12 last:border-r-0 break-words"
               >
                 {ci === 0 && cell.length <= 3 ? (
                   <span className="font-stencil text-base text-stamp tracking-wider">
@@ -342,7 +344,7 @@ function ManualPageView({ page, index, total }: { page: ManualPage; index: numbe
               return (
                 <div
                   key={bi}
-                  className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3"
+                  className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full"
                 >
                   {/* Header band */}
                   <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
@@ -353,29 +355,28 @@ function ManualPageView({ page, index, total }: { page: ManualPage; index: numbe
                     </span>
                   </div>
 
-                  {/* Columns — horizontal scroll if needed on small screens */}
-                  <div className="overflow-x-auto scrollbar-ink">
-                    <div className="flex min-w-fit">
-                      {block.columns.map((col, ci) => (
-                        <div
-                          key={ci}
-                          className={`flex flex-col items-center gap-2.5 px-3 sm:px-4 py-4 sm:py-5 shrink-0 ${
-                            ci < block.columns.length - 1
-                              ? "border-r border-ink/15"
-                              : ""
-                          } ${ci % 2 === 1 ? "bg-paper-stain/25" : ""}`}
-                        >
-                          {col.map((sym) => (
-                            <div
-                              key={sym.id}
-                              className="w-12 h-12 sm:w-14 sm:h-14 text-ink shrink-0"
-                            >
-                              <GlyphSvg paths={sym.paths} />
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
+                  {/* Columns share the full available width and the glyphs
+                     scale with their column so everything fits at any size. */}
+                  <div className="flex w-full">
+                    {block.columns.map((col, ci) => (
+                      <div
+                        key={ci}
+                        className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 px-0.5 py-2 ${
+                          ci < block.columns.length - 1
+                            ? "border-r border-ink/15"
+                            : ""
+                        } ${ci % 2 === 1 ? "bg-paper-stain/25" : ""}`}
+                      >
+                        {col.map((sym) => (
+                          <div
+                            key={sym.id}
+                            className="w-full max-w-14 aspect-square text-ink"
+                          >
+                            <GlyphSvg paths={sym.paths} />
+                          </div>
+                        ))}
+                      </div>
+                    ))}
                   </div>
                 </div>
               );

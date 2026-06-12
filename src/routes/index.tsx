@@ -124,7 +124,7 @@ function HomePage() {
             <button
               onClick={handleCreate}
               disabled={loading}
-              className="group relative overflow-hidden bg-amber text-void hover:bg-amber-glow disabled:bg-steel disabled:text-bone-dim disabled:cursor-not-allowed transition-colors font-stencil text-2xl tracking-wider uppercase px-6 py-5 flex items-center justify-between"
+              className="group relative overflow-hidden bg-amber text-void hover:bg-amber-glow disabled:bg-steel disabled:text-bone-dim transition-colors font-stencil text-2xl tracking-wider uppercase px-6 py-5 flex items-center justify-between"
             >
               <span className="flex items-center gap-3">
                 <Bomb size={28} strokeWidth={2.5} />

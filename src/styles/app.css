@@ -51,6 +51,19 @@ button, [role="button"] {
   touch-action: manipulation;
 }
 
+/* Tailwind v4 preflight no longer puts cursor:pointer on enabled buttons.
+   Restore the classic pointer for anything clickable. Disabled buttons just
+   revert to the default cursor — `not-allowed` is too aggressive visually. */
+button:not(:disabled),
+[role="button"]:not(:disabled),
+a {
+  cursor: pointer;
+}
+button:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: default;
+}
+
 /* ----- Textures ----- */
 
 .tx-grain::before {

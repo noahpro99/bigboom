@@ -383,7 +383,7 @@ function LobbyView({
               className={`w-full px-6 py-4 font-stencil text-xl uppercase tracking-[0.2em] transition-all flex items-center justify-between ${
                 bothPresent && !startPending
                   ? "bg-crimson hover:bg-crimson-bright text-bone cursor-pointer"
-                  : "bg-steel/40 text-bone-dim/50 cursor-not-allowed"
+                  : "bg-steel/40 text-bone-dim/50"
               }`}
             >
               <span className="flex items-center gap-3">
