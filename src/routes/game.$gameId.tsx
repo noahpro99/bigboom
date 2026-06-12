@@ -601,9 +601,16 @@ function LobbyView({
       <div className="absolute top-0 left-0 right-0 h-1.5 tx-stripes opacity-80" />
       <div className="absolute bottom-0 left-0 right-0 h-1.5 tx-stripes opacity-80" />
 
-      {/* Profile + Settings — sits in the top-right corner, but as a
-         small chassis-tile chip that visually belongs to the briefing
-         border rather than floating over content. */}
+      {/* Top corners — back-to-home on the left mirrors the
+         Profile/Settings chip on the right. */}
+      <button
+        onClick={onHome}
+        aria-label="Back to home"
+        title="Back to home"
+        className="absolute top-4 left-4 z-30 inline-flex items-center justify-center border border-rib p-1.5 text-bone-dim hover:text-bone hover:border-bone-dim/40 hover:bg-bone/8 transition-colors"
+      >
+        <Home size={16} strokeWidth={2.2} />
+      </button>
       <div className="absolute top-4 right-4 z-30">
         <ProfileButton variant="dark" />
       </div>
@@ -774,13 +781,6 @@ function LobbyView({
           </div>
         </div>
 
-        <button
-          onClick={onHome}
-          className="mt-6 text-bone-dim/60 hover:text-bone-dim text-[10px] font-mono uppercase tracking-[0.25em] flex items-center gap-1.5"
-        >
-          <Home size={11} />
-          Home
-        </button>
       </div>
     </div>
   );

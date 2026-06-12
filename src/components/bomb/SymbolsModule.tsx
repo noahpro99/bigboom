@@ -1,4 +1,3 @@
-import { Check } from "lucide-react";
 import type { Module, SymbolsModuleConfig } from "../../lib/types";
 import { play } from "../../lib/sound";
 
@@ -185,13 +184,6 @@ export function SymbolsModule({
             >
               <div className="relative w-14 h-14">
                 <EngravedGlyph paths={sym.paths} armed={pressed} />
-                {pressed && (
-                  <div className="absolute -top-2 -right-2">
-                    <div className="w-5 h-5 rounded-full bg-phosphor/90 shadow-[0_0_8px_#00f5a0] border border-phosphor flex items-center justify-center">
-                      <Check size={11} className="text-void" strokeWidth={3} />
-                    </div>
-                  </div>
-                )}
               </div>
             </button>
           );
