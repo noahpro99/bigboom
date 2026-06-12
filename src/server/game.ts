@@ -467,9 +467,19 @@ export const startHold = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// Defuser releases the held button — validate timing
+// Defuser releases the held button — validate timing.
+// `clientRemaining` is the number of seconds the Defuser saw at the moment of
+// release. We trust it (within a small sanity bound versus our own clock) to
+// avoid network-latency strikes where the timer has ticked off between click
+// and HTTP arrival.
 export const releaseHold = createServerFn({ method: "POST" })
-  .validator((data: { gameId: string; moduleId: string }) => data)
+  .validator(
+    (data: {
+      gameId: string;
+      moduleId: string;
+      clientRemaining?: number;
+    }) => data
+  )
   .handler(async ({ data }) => {
     const db = getDb();
     const mod = loadModule(data.moduleId);
@@ -502,7 +512,16 @@ export const releaseHold = createServerFn({ method: "POST" })
       timeRemaining = Math.max(0, gameRow.timer_seconds - elapsed);
     }
 
-    const correct = checkReleaseTiming(config, timeRemaining);
+    // Prefer the client's reported time-at-click (within a 3s sanity bound)
+    // so that HTTP latency between the click and the server check doesn't
+    // make the timer's last digit advance under the user's feet.
+    const reported = data.clientRemaining;
+    const checkAt =
+      typeof reported === "number" && Math.abs(reported - timeRemaining) <= 3
+        ? Math.floor(reported)
+        : timeRemaining;
+
+    const correct = checkReleaseTiming(config, checkAt);
 
     db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
       JSON.stringify({ ...mod.state, isHolding: false }),

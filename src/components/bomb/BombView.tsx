@@ -139,11 +139,24 @@ export function BombView({ gameState }: BombViewProps) {
                     onHoldStart={() =>
                       startMut.mutate({ data: { moduleId: mod.id } })
                     }
-                    onHoldRelease={() =>
+                    onHoldRelease={() => {
+                      // Compute time-remaining at the exact click moment so the
+                      // server can verify against the same second the player saw,
+                      // not the ~half-second-later instant the request lands.
+                      const live = game.startedAt
+                        ? Math.max(
+                            0,
+                            game.startedAt + game.timerSeconds - Date.now() / 1000
+                          )
+                        : timeRemaining;
                       releaseMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id },
-                      })
-                    }
+                        data: {
+                          gameId: game.id,
+                          moduleId: mod.id,
+                          clientRemaining: Math.floor(live),
+                        },
+                      });
+                    }}
                   />
                 );
               }
