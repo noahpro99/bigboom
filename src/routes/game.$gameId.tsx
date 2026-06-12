@@ -126,7 +126,7 @@ function GamePage() {
   // bring it back up for the lobby + game-over overlay.
   useEffect(() => {
     const status = gameState?.game.status;
-    if (status === "active") playMusic("menuMusic", 0.04);
+    if (status === "active") playMusic("menuMusic", 0.02);
     else if (status === "waiting" || status === "won" || status === "lost") {
       playMusic("menuMusic", 0.12);
     }

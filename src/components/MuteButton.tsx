@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 import { isMuted, setMuted, subscribeMuted, play } from "../lib/sound";
 
@@ -8,12 +8,13 @@ interface MuteButtonProps {
 }
 
 export function MuteButton({ variant = "dark", className = "" }: MuteButtonProps) {
-  // SSR-safe: start as `false`, sync on mount.
-  const [muted, setLocal] = useState(false);
-  useEffect(() => {
-    setLocal(isMuted());
-    return subscribeMuted(() => setLocal(isMuted()));
-  }, []);
+  // React's official primitive for external-store subscriptions. Avoids the
+  // useState+useEffect race that left the icon stuck on the previous value.
+  const muted = useSyncExternalStore(
+    subscribeMuted,
+    () => isMuted(),
+    () => false
+  );
 
   const Icon = muted ? VolumeX : Volume2;
 

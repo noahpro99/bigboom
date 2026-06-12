@@ -97,16 +97,24 @@ function applyMusicVolume(key: MusicKey) {
   const h = musicCache.get(key);
   if (!h) return;
   const target = musicTargetVolume.get(key) ?? MUSIC_VOLUMES[key];
-  h.volume(muted ? 0 : target);
+  h.volume(target);
+}
+
+function applyMusicPlayState(key: MusicKey) {
+  const h = musicCache.get(key);
+  if (!h) return;
+  const wantsPlaying = activeMusic.has(key) && !muted;
+  if (wantsPlaying && !h.playing()) h.play();
+  else if (!wantsPlaying && h.playing()) h.pause();
 }
 
 export function playMusic(key: MusicKey, volume?: number) {
   if (typeof window === "undefined") return;
-  const h = loadMusic(key);
+  loadMusic(key);
   activeMusic.add(key);
   if (typeof volume === "number") musicTargetVolume.set(key, volume);
   applyMusicVolume(key);
-  if (!h.playing()) h.play();
+  applyMusicPlayState(key);
 }
 
 export function setMusicVolume(key: MusicKey, volume: number) {
@@ -130,8 +138,9 @@ export function setMuted(v: boolean) {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(MUTE_KEY, v ? "1" : "0");
   }
-  // Apply to any music that is currently playing.
-  activeMusic.forEach(applyMusicVolume);
+  // Mute pauses every track outright (cleaner than volume=0 with html5
+  // streaming). Unmute resumes from the same position.
+  activeMusic.forEach(applyMusicPlayState);
   listeners.forEach((l) => l());
 }
 
