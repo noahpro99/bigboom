@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { createGame } from "../server/game";
 import { getSessionId } from "../lib/session";
-import { play, preloadAll } from "../lib/sound";
+import { play, preloadAll, playMusic, stopMusic } from "../lib/sound";
 import { MuteButton } from "../components/MuteButton";
 import { Bomb, ArrowRight, Link2, AlertTriangle } from "lucide-react";
 import { DiscordIcon } from "../components/icons/Discord";
@@ -33,10 +33,12 @@ function HomePage() {
   const [pasteError, setPasteError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // First user interaction unlocks audio on Safari/Chrome — preload then.
+  // First user interaction unlocks audio on Safari/Chrome — preload SFX and
+  // kick off the menu music then. Browsers won't autoplay before a gesture.
   useEffect(() => {
     const once = () => {
       preloadAll();
+      playMusic("menuMusic");
       window.removeEventListener("pointerdown", once);
     };
     window.addEventListener("pointerdown", once);

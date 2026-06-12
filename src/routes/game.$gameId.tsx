@@ -14,7 +14,7 @@ import { ManualView } from "../components/manual/ManualView";
 import { MuteButton } from "../components/MuteButton";
 import { SoundLayer } from "../components/SoundLayer";
 import { getSessionId } from "../lib/session";
-import { play, preloadAll } from "../lib/sound";
+import { play, preloadAll, playMusic, stopMusic } from "../lib/sound";
 import type { PlayerRole } from "../lib/types";
 import {
   Bomb,
@@ -120,6 +120,16 @@ function GamePage() {
   useEffect(() => {
     preloadAll();
   }, []);
+
+  // Music carries from the home page through the lobby. As soon as the bomb
+  // is armed we kill it so the silence + ticking carry the tension. If the
+  // round ends (won/lost) we bring it back for the overlay.
+  useEffect(() => {
+    const status = gameState?.game.status;
+    if (status === "waiting") playMusic("menuMusic");
+    else if (status === "active") stopMusic("menuMusic");
+    else if (status === "won" || status === "lost") playMusic("menuMusic");
+  }, [gameState?.game.status]);
 
   useEffect(() => {
     if (gameState?.game.status !== "active") return;
