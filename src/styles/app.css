@@ -47,6 +47,10 @@ body {
   color: var(--color-bone);
 }
 
+button, [role="button"] {
+  touch-action: manipulation;
+}
+
 /* ----- Textures ----- */
 
 .tx-grain::before {

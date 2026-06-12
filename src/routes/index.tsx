@@ -93,7 +93,7 @@ function HomePage() {
           </div>
         </header>
 
-        <main className="flex-1 flex flex-col items-center justify-center px-6 py-10">
+        <main className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-8 sm:py-10">
           {/* Hero */}
           <div className="text-center mb-12 reveal" style={{ animationDelay: "60ms" }}>
             <div className="inline-flex items-center gap-2 mb-5 text-amber border border-amber/40 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.3em]">
@@ -102,8 +102,8 @@ function HomePage() {
             </div>
 
             <h1 className="font-stencil leading-[0.85] tracking-tight">
-              <span className="block text-7xl sm:text-8xl text-bone">BIG</span>
-              <span className="block text-7xl sm:text-8xl text-crimson">BOOM</span>
+              <span className="block text-6xl sm:text-7xl md:text-8xl text-bone">BIG</span>
+              <span className="block text-6xl sm:text-7xl md:text-8xl text-crimson">BOOM</span>
             </h1>
 
             <div className="flex items-center gap-3 justify-center mt-4">

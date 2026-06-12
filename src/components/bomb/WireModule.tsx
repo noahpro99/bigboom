@@ -86,7 +86,7 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
               key={i}
               disabled={!clickable}
               onClick={() => clickable && onCut(i)}
-              className={`relative flex flex-col items-center group ${
+              className={`relative flex flex-col items-center justify-center group px-3 sm:px-2 ${
                 isCut ? "wire-cut" : ""
               } ${clickable ? "cursor-pointer" : "cursor-default"}`}
               aria-label={isEmpty ? "Empty slot" : `${slot!.color} wire`}
@@ -108,7 +108,7 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
                 />
               )}
               {clickable && (
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute inset-0 flex items-center justify-center opacity-25 sm:opacity-0 group-hover:opacity-100 group-active:opacity-90 transition-opacity pointer-events-none">
                   <Scissors
                     size={18}
                     className="text-bone drop-shadow-[0_0_4px_#000]"

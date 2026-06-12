@@ -37,15 +37,15 @@ export function BombView({ gameState }: BombViewProps) {
       <div className="absolute bottom-0 left-0 right-0 h-1.5 tx-stripes opacity-90 z-10" />
 
       {/* Chassis header */}
-      <div className="relative border-b border-rib bg-chassis/80 backdrop-blur-sm px-6 py-3 z-20">
-        <div className="flex items-center justify-between gap-4 max-w-6xl mx-auto">
+      <div className="relative border-b border-rib bg-chassis/80 backdrop-blur-sm px-4 sm:px-6 py-3 z-20">
+        <div className="flex items-center justify-between gap-2 sm:gap-4 max-w-6xl mx-auto">
           {/* Left: serial sticker */}
-          <div className="flex items-center gap-3">
-            <div className="relative bg-amber/95 text-void px-3 py-1.5 font-stencil tracking-wider text-sm shadow-md transform -rotate-1">
-              <div className="text-[8px] uppercase tracking-[0.3em] leading-none mb-0.5 opacity-80">
-                Serial No.
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="relative bg-amber/95 text-void px-2 sm:px-3 py-1 sm:py-1.5 font-stencil tracking-wider text-sm shadow-md transform -rotate-1">
+              <div className="text-[7px] sm:text-[8px] uppercase tracking-[0.3em] leading-none mb-0.5 opacity-80">
+                SER.
               </div>
-              <div className="font-mono font-black tracking-[0.18em] leading-tight">
+              <div className="font-mono font-black tracking-[0.12em] sm:tracking-[0.18em] leading-tight text-xs sm:text-sm">
                 {game.serial}
               </div>
             </div>
@@ -64,16 +64,17 @@ export function BombView({ gameState }: BombViewProps) {
 
           {/* Right: strikes */}
           <div className="flex flex-col items-end gap-1">
-            <span className="text-[9px] font-stencil tracking-[0.3em] text-bone-dim uppercase flex items-center gap-1">
+            <span className="hidden sm:flex text-[9px] font-stencil tracking-[0.3em] text-bone-dim uppercase items-center gap-1">
               <Skull size={10} /> STRIKES
             </span>
-            <div className="flex items-center gap-1.5 border border-steel/50 px-2.5 py-1 bg-black/50">
+            <Skull size={10} className="sm:hidden text-bone-dim mb-0.5" />
+            <div className="flex items-center gap-1 sm:gap-1.5 border border-steel/50 px-2 sm:px-2.5 py-1 bg-black/50">
               {Array.from({ length: game.maxStrikes }).map((_, i) => {
                 const isHit = i < game.strikes;
                 return (
                   <div
                     key={i}
-                    className={`w-2.5 h-2.5 rounded-full ${
+                    className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full ${
                       isHit
                         ? "bg-crimson shadow-[0_0_8px_#e0245e]"
                         : "bg-steel/70 border border-steel-light/30"
@@ -86,7 +87,7 @@ export function BombView({ gameState }: BombViewProps) {
         </div>
 
         {/* Mini status bar under header */}
-        <div className="max-w-6xl mx-auto mt-2 flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/70">
+        <div className="hidden sm:flex max-w-6xl mx-auto mt-2 items-center justify-between text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/70">
           <div className="flex items-center gap-2">
             <Activity size={10} className="text-phosphor" />
             <span>Telemetry · Live</span>
@@ -96,7 +97,7 @@ export function BombView({ gameState }: BombViewProps) {
       </div>
 
       {/* Bomb body — module grid */}
-      <div className="flex-1 overflow-auto px-6 py-8 relative">
+      <div className="flex-1 overflow-auto px-4 sm:px-6 py-5 sm:py-8 relative">
         <div className="max-w-3xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {modules.map((mod: Module) => {
