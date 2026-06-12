@@ -1,6 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { generateManualPages } from "../../lib/generator";
-import type { ManualPage } from "../../lib/types";
+import {
+  generateManualPages,
+  memoryRuleText,
+  encodeMorse,
+} from "../../lib/generator";
+import type {
+  ManualPage,
+  SimonColor,
+  MazeData,
+  MemoryStageConfig,
+  MorseEntry,
+} from "../../lib/types";
+import { MORSE_FREQS } from "../../lib/types";
+import {
+  MAZE_SIZE,
+  MAZE_W_N,
+  MAZE_W_E,
+  MAZE_W_S,
+  MAZE_W_W,
+} from "../../lib/types";
 import { BookOpen, ChevronLeft, ChevronRight } from "lucide-react";
 import { play } from "../../lib/sound";
 
@@ -180,28 +198,38 @@ export function ManualView({ seed }: ManualViewProps) {
 
       {/* Book area — full-width scroll, swipe (touch or mouse drag) drives
           page changes. `touch-action: pan-y` lets vertical scroll work
-          natively, we only steal horizontal-dominant gestures. */}
+          natively, we only steal horizontal-dominant gestures.
+          The `paper-stack` wrapper draws the visible cut edges of the
+          surrounding pages at the left/right, so the active sheet reads
+          as one page of a larger block — mid-flip, the leaving sheet
+          slides off those edges and exposes more of the stack. */}
       <div
-        className="flex-1 overflow-auto scrollbar-ink min-h-0 tx-paper-lines"
-        style={{ touchAction: "pan-y" }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={() => {
-          pointerRef.current = null;
-        }}
+        className={`flex-1 min-h-0 overflow-hidden relative paper-stack ${
+          animating ? "is-flipping" : ""
+        }`}
       >
-        <main
-          key={selectedIdx}
-          onAnimationEnd={handleAnimationEnd}
-          className={`min-h-full py-5 sm:py-10 px-4 sm:px-10 ${animClass}`}
+        <div
+          className="absolute inset-0 overflow-auto scrollbar-ink tx-paper-lines"
+          style={{ touchAction: "pan-y" }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={() => {
+            pointerRef.current = null;
+          }}
         >
-          <ManualPageView
-            page={page}
-            index={selectedIdx}
-            total={pages.length}
-          />
-        </main>
+          <main
+            key={selectedIdx}
+            onAnimationEnd={handleAnimationEnd}
+            className={`min-h-full paper-sheet tx-paper py-5 sm:py-10 px-4 sm:px-10 mx-2 ${animClass}`}
+          >
+            <ManualPageView
+              page={page}
+              index={selectedIdx}
+              total={pages.length}
+            />
+          </main>
+        </div>
       </div>
     </div>
   );
@@ -275,6 +303,337 @@ function ResponsiveTable({
   );
 }
 
+
+/* Simon substitution table — 6 cells laid out 2 columns × 3 rows.
+   Each cell is one (vowel/no-vowel, strikes 0/1/2) sub-table that maps
+   each flashed colour to the press colour. Manual page rotates per
+   seed so this is the only place these cells are surfaced. */
+const SIMON_LIST: SimonColor[] = ["red", "blue", "yellow", "green"];
+const SIMON_SWATCH: Record<SimonColor, { bg: string; fg: string; label: string }> = {
+  red:    { bg: "#c0312a", fg: "#fff",   label: "RED" },
+  blue:   { bg: "#1d4ea0", fg: "#fff",   label: "BLUE" },
+  yellow: { bg: "#e6b524", fg: "#3a2a00", label: "YELLOW" },
+  green:  { bg: "#1f8c52", fg: "#fff",   label: "GREEN" },
+};
+
+function SimonSwatch({ color }: { color: SimonColor }) {
+  const s = SIMON_SWATCH[color];
+  return (
+    <span
+      className="inline-flex items-center justify-center px-2 py-0.5 font-mono font-bold text-[11px] tracking-[0.18em] rounded-sm border border-ink/40"
+      style={{ background: s.bg, color: s.fg }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function SimonTableBlock({
+  tables,
+}: {
+  tables: Array<Record<SimonColor, SimonColor>>;
+}) {
+  /* tables[i] where i = strikes * 2 + (vowel ? 1 : 0). */
+  const ROWS = [
+    { strikes: 0, label: "0 STRIKES" },
+    { strikes: 1, label: "1 STRIKE" },
+    { strikes: 2, label: "2+ STRIKES" },
+  ];
+  const COLS: Array<{ vowel: boolean; label: string }> = [
+    { vowel: false, label: "No vowel in serial" },
+    { vowel: true, label: "Vowel in serial" },
+  ];
+  return (
+    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
+        <span>Simon · Substitution</span>
+        <span>Flash → Press</span>
+      </div>
+
+      <div className="grid" style={{ gridTemplateColumns: "auto 1fr 1fr" }}>
+        {/* header row */}
+        <div className="bg-ink/85 text-paper px-2 py-1.5 text-[10px] font-mono uppercase tracking-[0.2em] border-b border-paper/15" />
+        {COLS.map((c) => (
+          <div
+            key={c.label}
+            className="bg-ink/85 text-paper px-2 py-1.5 text-[10px] font-mono uppercase tracking-[0.2em] border-b border-paper/15 border-l border-paper/15"
+          >
+            {c.label}
+          </div>
+        ))}
+
+        {ROWS.map((row, ri) =>
+          [null, ...COLS].map((col, ci) => {
+            const stripe = ri % 2 === 1 ? "bg-paper-stain/30" : "bg-paper";
+            if (col === null) {
+              return (
+                <div
+                  key={`${ri}-l`}
+                  className={`${stripe} px-2 py-2 text-[10px] font-mono uppercase tracking-[0.2em] text-ink/70 border-t border-ink/15 self-center whitespace-nowrap`}
+                >
+                  {row.label}
+                </div>
+              );
+            }
+            const idx = row.strikes * 2 + (col.vowel ? 1 : 0);
+            const cell = tables[idx];
+            return (
+              <div
+                key={`${ri}-${ci}`}
+                className={`${stripe} px-2 py-1.5 border-t border-ink/15 border-l border-ink/15`}
+              >
+                <div className="grid grid-cols-[auto_auto_auto] gap-x-1 gap-y-0.5 items-center justify-start">
+                  {SIMON_LIST.map((flash) => (
+                    <div key={flash} className="contents">
+                      <SimonSwatch color={flash} />
+                      <span className="font-mono text-ink/60 text-xs px-1">→</span>
+                      <SimonSwatch color={cell[flash]} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Render a single maze from the pool — walls drawn as ink lines, the
+   two identification markers drawn as filled green dots. Player matches
+   green dots to the bomb display. */
+function MazeOne({ maze }: { maze: MazeData }) {
+  const CELL = 22;
+  const PAD = 2;
+  const size = MAZE_SIZE * CELL + PAD * 2;
+  const lines: React.ReactNode[] = [];
+
+  // Outer border — always present.
+  lines.push(
+    <rect
+      key="border"
+      x={PAD}
+      y={PAD}
+      width={MAZE_SIZE * CELL}
+      height={MAZE_SIZE * CELL}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    />
+  );
+
+  // Internal walls. To avoid drawing each wall twice (cells share walls),
+  // only render N (top) and W (left) walls — except for the outer edges
+  // which the border already covers.
+  for (let y = 0; y < MAZE_SIZE; y++) {
+    for (let x = 0; x < MAZE_SIZE; x++) {
+      const w = maze.walls[y * MAZE_SIZE + x];
+      const x0 = PAD + x * CELL;
+      const y0 = PAD + y * CELL;
+      if (y > 0 && w & MAZE_W_N) {
+        lines.push(
+          <line
+            key={`n-${x}-${y}`}
+            x1={x0}
+            y1={y0}
+            x2={x0 + CELL}
+            y2={y0}
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="square"
+          />
+        );
+      }
+      if (x > 0 && w & MAZE_W_W) {
+        lines.push(
+          <line
+            key={`w-${x}-${y}`}
+            x1={x0}
+            y1={y0}
+            x2={x0}
+            y2={y0 + CELL}
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="square"
+          />
+        );
+      }
+    }
+  }
+
+  // Marker dots — drawn over the grid.
+  const markers = maze.markers.map((m, i) => (
+    <circle
+      key={`mk-${i}`}
+      cx={PAD + m.x * CELL + CELL / 2}
+      cy={PAD + m.y * CELL + CELL / 2}
+      r={CELL * 0.28}
+      fill="var(--color-ledger, #0e6b3a)"
+      stroke="#03331c"
+      strokeWidth="0.6"
+    />
+  ));
+
+  return (
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      className="w-full h-auto block"
+      style={{ color: "var(--color-ink)" }}
+    >
+      {lines}
+      {markers}
+    </svg>
+  );
+}
+
+function MazeGridBlock({ pool }: { pool: MazeData[] }) {
+  return (
+    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
+        <span>Maze Pool</span>
+        <span>Match green markers</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 p-2">
+        {pool.map((maze, i) => (
+          <div
+            key={i}
+            className={`border border-ink/25 p-1.5 ${
+              i % 2 === 1 ? "bg-paper-stain/30" : "bg-paper"
+            }`}
+          >
+            <div className="text-[8px] font-mono uppercase tracking-[0.25em] text-ink/55 mb-1 px-1">
+              §{i + 1}
+            </div>
+            <MazeOne maze={maze} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MemoryStagesBlock({ stages }: { stages: MemoryStageConfig[] }) {
+  return (
+    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
+        <span>Memory · Stages</span>
+        <span>Apply rule, remember press</span>
+      </div>
+      <div className="divide-y divide-ink/15">
+        {stages.map((stage, i) => (
+          <div
+            key={i}
+            className={`px-3 py-2 ${
+              i % 2 === 1 ? "bg-paper-stain/30" : "bg-paper"
+            }`}
+          >
+            <div className="flex items-baseline gap-3 mb-1">
+              <span className="font-stencil text-stamp text-base tracking-[0.18em]">
+                STAGE {i + 1}
+              </span>
+              <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-ink/55">
+                Display: <span className="font-bold text-ink">{stage.display}</span>
+              </span>
+            </div>
+            <p className="font-serif text-[14px] sm:text-[15px] leading-relaxed text-ink/85">
+              {memoryRuleText(stage.rule)}.
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* Morse table — for each word in the pool show its morse encoding and
+   the frequency to transmit on. Pool is pre-sorted alphabetically. */
+function MorseTableBlock({ pool }: { pool: MorseEntry[] }) {
+  return (
+    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
+        <span>Morse · Word ↔ Frequency</span>
+        <span>MHz</span>
+      </div>
+      <div className="grid grid-cols-[auto_1fr_auto] divide-y divide-ink/15">
+        {pool.map((entry, i) => {
+          const stripe = i % 2 === 1 ? "bg-paper-stain/30" : "bg-paper";
+          const morse = encodeMorse(entry.word).join("  ");
+          return (
+            <div key={i} className="contents">
+              <div
+                className={`${stripe} px-3 py-1.5 font-stencil text-lg tracking-[0.15em] text-ink border-t border-ink/15`}
+              >
+                {entry.word}
+              </div>
+              <div
+                className={`${stripe} px-3 py-1.5 font-mono text-xs leading-tight text-ink/75 border-t border-ink/15 self-center break-all`}
+              >
+                {morse}
+              </div>
+              <div
+                className={`${stripe} px-3 py-1.5 font-mono font-bold text-ink border-t border-ink/15 self-center whitespace-nowrap`}
+              >
+                {MORSE_FREQS[entry.freqIndex].toFixed(3)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* Password manual: shows the 5 letter pools at the top and the full
+   dictionary below as a flowing word-grid. The Expert spots which
+   words can be assembled from the available letters. */
+function PasswordDictBlock({
+  words,
+  columns,
+}: {
+  words: string[];
+  columns: string[][];
+}) {
+  return (
+    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
+        <span>Password · Letter Pools</span>
+      </div>
+      <div className="grid grid-cols-5 gap-px bg-ink/15 border-b border-ink/15">
+        {columns.map((col, i) => (
+          <div key={i} className="bg-paper px-2 py-2">
+            <div className="text-[9px] font-mono uppercase tracking-[0.3em] text-ink/55 mb-1 text-center">
+              Col {i + 1}
+            </div>
+            <div className="flex flex-col items-center gap-0.5">
+              {col.map((ch, j) => (
+                <div
+                  key={`${i}-${j}`}
+                  className="font-stencil text-lg leading-tight text-ink"
+                >
+                  {ch}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
+        Dictionary
+      </div>
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-x-3 gap-y-1 p-3 bg-paper">
+        {words.map((w) => (
+          <span
+            key={w}
+            className="font-mono text-[12px] tracking-[0.1em] text-ink/85"
+          >
+            {w}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function GlyphSvg({ paths }: { paths: string[] }) {
   return (
@@ -362,6 +721,32 @@ function ManualPageView({ page, index, total }: { page: ManualPage; index: numbe
                     </span>
                   </div>
                 </div>
+              );
+            }
+
+            if (block.type === 'simonTable') {
+              return <SimonTableBlock key={bi} tables={block.tables} />;
+            }
+
+            if (block.type === 'mazeGrid') {
+              return <MazeGridBlock key={bi} pool={block.pool} />;
+            }
+
+            if (block.type === 'memoryStages') {
+              return <MemoryStagesBlock key={bi} stages={block.stages} />;
+            }
+
+            if (block.type === 'morseTable') {
+              return <MorseTableBlock key={bi} pool={block.pool} />;
+            }
+
+            if (block.type === 'passwordDict') {
+              return (
+                <PasswordDictBlock
+                  key={bi}
+                  words={block.words}
+                  columns={block.columns}
+                />
               );
             }
 

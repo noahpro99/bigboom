@@ -6,10 +6,20 @@ import {
   generateButtonModule,
   generateSymbolsModule,
   generateSymbolsColumns,
+  generateSimonModule,
+  generateMazeModule,
+  generateMemoryModule,
+  generateMorseModule,
+  generatePasswordModule,
   generateSerialNumber,
   getWireSolution,
   getButtonAction,
   getSymbolsSolution,
+  getSimonExpected,
+  tryMazeMove,
+  getMemoryExpected,
+  getMorseSolutionFreqIndex,
+  passwordIsCorrect,
 } from "../lib/generator";
 import type {
   GameState,
@@ -18,6 +28,19 @@ import type {
   ButtonModuleConfig,
   WireModuleConfig,
   SymbolsModuleConfig,
+  SimonModuleConfig,
+  MazeModuleConfig,
+  Direction,
+  MazeCell,
+  MemoryModuleConfig,
+  MemoryPress,
+  MorseModuleConfig,
+  PasswordModuleConfig,
+} from "../lib/types";
+import {
+  MORSE_FREQS,
+  PASSWORD_COLS,
+  PASSWORD_LETTERS_PER_COL,
 } from "../lib/types";
 
 function shortId(): string {
@@ -65,6 +88,31 @@ export const createGame = createServerFn({ method: "POST" })
         );
       }
     }
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'simon', ?, ?)",
+      [nanoid(), gameId, 2 + symbolCount, JSON.stringify(generateSimonModule(seed))]
+    );
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'maze', ?, ?)",
+      [nanoid(), gameId, 3 + symbolCount, JSON.stringify(generateMazeModule(seed))]
+    );
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'memory', ?, ?)",
+      [nanoid(), gameId, 4 + symbolCount, JSON.stringify(generateMemoryModule(seed))]
+    );
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'morse', ?, ?)",
+      [nanoid(), gameId, 5 + symbolCount, JSON.stringify(generateMorseModule(seed))]
+    );
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'password', ?, ?)",
+      [nanoid(), gameId, 6 + symbolCount, JSON.stringify(generatePasswordModule(seed))]
+    );
 
     // Creator starts as Defuser.
     db.run(
@@ -216,7 +264,7 @@ export const getGameState = createServerFn({ method: "GET" })
     const modules: Module[] = moduleRows.map((m) => ({
       id: m.id,
       gameId: m.game_id,
-      type: m.type as "wire" | "button" | "symbols",
+      type: m.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password",
       position: m.position,
       config: JSON.parse(m.config_json),
       state: JSON.parse(m.state_json),
@@ -303,6 +351,31 @@ export const restartGame = createServerFn({ method: "POST" })
       }
     }
 
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'simon', ?, ?)",
+      [nanoid(), data.gameId, 2 + symbolCount, JSON.stringify(generateSimonModule(newSeed))]
+    );
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'maze', ?, ?)",
+      [nanoid(), data.gameId, 3 + symbolCount, JSON.stringify(generateMazeModule(newSeed))]
+    );
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'memory', ?, ?)",
+      [nanoid(), data.gameId, 4 + symbolCount, JSON.stringify(generateMemoryModule(newSeed))]
+    );
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'morse', ?, ?)",
+      [nanoid(), data.gameId, 5 + symbolCount, JSON.stringify(generateMorseModule(newSeed))]
+    );
+
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'password', ?, ?)",
+      [nanoid(), data.gameId, 6 + symbolCount, JSON.stringify(generatePasswordModule(newSeed))]
+    );
+
     return { ok: true as const };
   });
 
@@ -382,7 +455,7 @@ function loadModule(moduleId: string): Module | null {
   return {
     id: row.id,
     gameId: row.game_id,
-    type: row.type as "wire" | "button" | "symbols",
+    type: row.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password",
     position: row.position,
     config: JSON.parse(row.config_json),
     state: JSON.parse(row.state_json),
@@ -552,6 +625,232 @@ export const pressSymbol = createServerFn({ method: "POST" })
     } else {
       db.run("UPDATE modules SET state_json = ?, struck = 1 WHERE id = ?", [
         JSON.stringify({ ...mod.state, pressedIds: [] }),
+        data.moduleId,
+      ]);
+      const { lost } = applyStrike(data.gameId);
+      return { ok: true, correct: false, lost };
+    }
+  });
+
+// Password — cycle a single dial. Pure state update, no correctness
+// check on individual rotations.
+export const cyclePassword = createServerFn({ method: "POST" })
+  .validator(
+    (data: { moduleId: string; col: number; delta: number }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+    if (data.col < 0 || data.col >= PASSWORD_COLS) return { ok: false };
+    const dials = mod.state.passwordDials ?? new Array(PASSWORD_COLS).fill(0);
+    const cur = dials[data.col] ?? 0;
+    const next =
+      (cur + data.delta + PASSWORD_LETTERS_PER_COL) % PASSWORD_LETTERS_PER_COL;
+    const newDials = [...dials];
+    newDials[data.col] = next;
+    db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
+      JSON.stringify({ ...mod.state, passwordDials: newDials }),
+      data.moduleId,
+    ]);
+    return { ok: true };
+  });
+
+export const submitPassword = createServerFn({ method: "POST" })
+  .validator((data: { gameId: string; moduleId: string }) => data)
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+    const config = mod.config as PasswordModuleConfig;
+    const dials = mod.state.passwordDials ?? new Array(PASSWORD_COLS).fill(0);
+    const attempt = config.columns
+      .map((col, i) => col[dials[i] ?? 0])
+      .join("");
+    if (passwordIsCorrect(config, attempt)) {
+      db.run("UPDATE modules SET solved = 1, struck = 0 WHERE id = ?", [
+        data.moduleId,
+      ]);
+      checkAllSolved(data.gameId);
+      return { ok: true, correct: true, solved: true };
+    }
+    db.run("UPDATE modules SET struck = 1 WHERE id = ?", [data.moduleId]);
+    const { lost } = applyStrike(data.gameId);
+    return { ok: true, correct: false, lost };
+  });
+
+// Morse — dial a frequency. The dial state is local to the module and
+// doesn't punish wrong intermediate values, so we just persist the new
+// index without any correctness check.
+export const dialMorse = createServerFn({ method: "POST" })
+  .validator(
+    (data: { moduleId: string; freqIndex: number }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+    if (data.freqIndex < 0 || data.freqIndex >= MORSE_FREQS.length) {
+      return { ok: false };
+    }
+    db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
+      JSON.stringify({ ...mod.state, morseFreqIndex: data.freqIndex }),
+      data.moduleId,
+    ]);
+    return { ok: true };
+  });
+
+// Morse — transmit. Validates the current frequency against the solution.
+export const transmitMorse = createServerFn({ method: "POST" })
+  .validator((data: { gameId: string; moduleId: string }) => data)
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+    const config = mod.config as MorseModuleConfig;
+    const current = mod.state.morseFreqIndex ?? 0;
+    const expected = getMorseSolutionFreqIndex(config);
+    if (current === expected) {
+      db.run("UPDATE modules SET solved = 1, struck = 0 WHERE id = ?", [
+        data.moduleId,
+      ]);
+      checkAllSolved(data.gameId);
+      return { ok: true, correct: true, solved: true };
+    }
+    db.run("UPDATE modules SET struck = 1 WHERE id = ?", [data.moduleId]);
+    const { lost } = applyStrike(data.gameId);
+    return { ok: true, correct: false, lost };
+  });
+
+// Defuser presses one of the four memory buttons. Position 1..4. The
+// expected position depends on the rule for the current stage, which may
+// reference prior-stage history. Wrong press → strike + reset to stage 1
+// (KTaNE-canonical behaviour).
+export const pressMemory = createServerFn({ method: "POST" })
+  .validator(
+    (data: { gameId: string; moduleId: string; position: number }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+
+    const config = mod.config as MemoryModuleConfig;
+    const history: MemoryPress[] = mod.state.memoryHistory ?? [];
+    const stageIdx = history.length;
+    if (stageIdx >= config.stages.length) return { ok: false };
+
+    const stage = config.stages[stageIdx];
+    const expected = getMemoryExpected(config, stageIdx, history);
+
+    if (data.position === expected) {
+      const press: MemoryPress = {
+        position: data.position,
+        label: stage.labels[data.position - 1],
+      };
+      const newHistory = [...history, press];
+      const solved = newHistory.length === config.stages.length;
+      db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
+        JSON.stringify({ ...mod.state, memoryHistory: newHistory }),
+        data.moduleId,
+      ]);
+      if (solved) {
+        db.run("UPDATE modules SET solved = 1 WHERE id = ?", [data.moduleId]);
+        checkAllSolved(data.gameId);
+      }
+      return { ok: true, correct: true, solved };
+    } else {
+      db.run("UPDATE modules SET state_json = ?, struck = 1 WHERE id = ?", [
+        JSON.stringify({ ...mod.state, memoryHistory: [] }),
+        data.moduleId,
+      ]);
+      const { lost } = applyStrike(data.gameId);
+      return { ok: true, correct: false, lost };
+    }
+  });
+
+// Defuser presses an arrow in the maze. The server validates against
+// the active maze's walls — bumping into a wall is a strike. Reaching
+// the goal cell solves the module.
+export const moveMaze = createServerFn({ method: "POST" })
+  .validator(
+    (data: { gameId: string; moduleId: string; direction: Direction }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+
+    const config = mod.config as MazeModuleConfig;
+    const active = config.pool[config.activeIndex];
+    const current: MazeCell = mod.state.mazePos ?? config.start;
+    const trail: MazeCell[] = mod.state.mazeTrail ?? [config.start];
+
+    const next = tryMazeMove(active.walls, current, data.direction);
+    if (!next) {
+      // Bumped a wall — strike, position unchanged.
+      db.run("UPDATE modules SET struck = 1 WHERE id = ?", [data.moduleId]);
+      const { lost } = applyStrike(data.gameId);
+      return { ok: true, correct: false, lost };
+    }
+
+    const newTrail = [...trail, next];
+    const reachedGoal = next.x === config.goal.x && next.y === config.goal.y;
+
+    db.run("UPDATE modules SET state_json = ?, struck = 0 WHERE id = ?", [
+      JSON.stringify({ ...mod.state, mazePos: next, mazeTrail: newTrail }),
+      data.moduleId,
+    ]);
+
+    if (reachedGoal) {
+      db.run("UPDATE modules SET solved = 1 WHERE id = ?", [data.moduleId]);
+      checkAllSolved(data.gameId);
+      return { ok: true, correct: true, solved: true };
+    }
+    return { ok: true, correct: true };
+  });
+
+// Defuser presses a Simon colour. The expected colour depends on
+// (serial vowel, current strikes, how many flashes already pressed).
+// Wrong press → strike and progress resets to 0.
+export const pressSimon = createServerFn({ method: "POST" })
+  .validator(
+    (data: { gameId: string; moduleId: string; color: string }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+
+    const gameRow = db
+      .query("SELECT serial_number, strikes FROM games WHERE id = ?")
+      .get(data.gameId) as { serial_number: string; strikes: number } | null;
+    if (!gameRow) return { ok: false };
+
+    const config = mod.config as SimonModuleConfig;
+    const pressed = mod.state.simonPressed ?? 0;
+    const expected = getSimonExpected(
+      config,
+      gameRow.serial_number,
+      gameRow.strikes,
+      pressed
+    );
+
+    if (data.color === expected) {
+      const next = pressed + 1;
+      const solved = next === config.sequence.length;
+      db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
+        JSON.stringify({ ...mod.state, simonPressed: next }),
+        data.moduleId,
+      ]);
+      if (solved) {
+        db.run("UPDATE modules SET solved = 1 WHERE id = ?", [data.moduleId]);
+        checkAllSolved(data.gameId);
+      }
+      return { ok: true, correct: true, solved };
+    } else {
+      db.run("UPDATE modules SET state_json = ?, struck = 1 WHERE id = ?", [
+        JSON.stringify({ ...mod.state, simonPressed: 0 }),
         data.moduleId,
       ]);
       const { lost } = applyStrike(data.gameId);

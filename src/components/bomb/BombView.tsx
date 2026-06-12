@@ -2,6 +2,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { WireModule } from "./WireModule";
 import { ButtonModule } from "./ButtonModule";
 import { SymbolsModule } from "./SymbolsModule";
+import { SimonModule } from "./SimonModule";
+import { MazeModule } from "./MazeModule";
+import { MemoryModule } from "./MemoryModule";
+import { MorseModule } from "./MorseModule";
+import { PasswordModule } from "./PasswordModule";
 import { Timer } from "./Timer";
 import {
   cutWire,
@@ -9,6 +14,13 @@ import {
   startHold,
   releaseHold,
   pressSymbol,
+  pressSimon,
+  moveMaze,
+  pressMemory,
+  dialMorse,
+  transmitMorse,
+  cyclePassword,
+  submitPassword,
 } from "../../server/game";
 import { useDisplayTime } from "../../lib/useDisplayTime";
 import { play } from "../../lib/sound";
@@ -53,6 +65,34 @@ export function BombView({ gameState }: BombViewProps) {
   });
   const pressMut = useMutation({
     mutationFn: pressSymbol,
+    onSuccess: onActionResult,
+  });
+  const simonMut = useMutation({
+    mutationFn: pressSimon,
+    onSuccess: onActionResult,
+  });
+  const mazeMut = useMutation({
+    mutationFn: moveMaze,
+    onSuccess: onActionResult,
+  });
+  const memoryMut = useMutation({
+    mutationFn: pressMemory,
+    onSuccess: onActionResult,
+  });
+  const morseDialMut = useMutation({
+    mutationFn: dialMorse,
+    onSuccess: invalidate,
+  });
+  const morseTxMut = useMutation({
+    mutationFn: transmitMorse,
+    onSuccess: onActionResult,
+  });
+  const pwCycleMut = useMutation({
+    mutationFn: cyclePassword,
+    onSuccess: invalidate,
+  });
+  const pwSubmitMut = useMutation({
+    mutationFn: submitPassword,
     onSuccess: onActionResult,
   });
 
@@ -123,8 +163,9 @@ export function BombView({ gameState }: BombViewProps) {
         </div>
       </div>
 
-      {/* Bomb body — module grid */}
-      <div className="flex-1 overflow-auto scrollbar-dark px-4 sm:px-6 py-5 sm:py-8 relative">
+      {/* Bomb body — module grid. The bay itself is a sheet of brushed
+          steel; the grid lines stay on top for a subtle inspection grid. */}
+      <div className="flex-1 overflow-auto scrollbar-dark px-4 sm:px-6 py-5 sm:py-8 relative tx-metal-deep tx-grid-fine">
         <div className="max-w-3xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {modules.map((mod: Module) => {
@@ -183,6 +224,86 @@ export function BombView({ gameState }: BombViewProps) {
                     onPress={(symbolId) =>
                       pressMut.mutate({
                         data: { gameId: game.id, moduleId: mod.id, symbolId },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'simon') {
+                return (
+                  <SimonModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onPress={(color) =>
+                      simonMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id, color },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'maze') {
+                return (
+                  <MazeModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onMove={(direction) =>
+                      mazeMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id, direction },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'memory') {
+                return (
+                  <MemoryModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onPress={(position) =>
+                      memoryMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id, position },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'morse') {
+                return (
+                  <MorseModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onDial={(freqIndex) =>
+                      morseDialMut.mutate({
+                        data: { moduleId: mod.id, freqIndex },
+                      })
+                    }
+                    onTransmit={() =>
+                      morseTxMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'password') {
+                return (
+                  <PasswordModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onCycle={(col, delta) =>
+                      pwCycleMut.mutate({
+                        data: { moduleId: mod.id, col, delta },
+                      })
+                    }
+                    onSubmit={() =>
+                      pwSubmitMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id },
                       })
                     }
                   />
