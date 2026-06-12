@@ -1,0 +1,500 @@
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  User,
+  Sliders,
+  X,
+  LogOut,
+  ShieldCheck,
+  AlertTriangle,
+  Volume2,
+  VolumeX,
+  Music2,
+  Headphones,
+  Timer as TimerIcon,
+} from "lucide-react";
+import {
+  getBusVolume,
+  setBusVolume,
+  isMuted,
+  setMuted,
+  subscribeAudio,
+  play,
+  type Bus,
+} from "../lib/sound";
+import { signup, login, logout, getCurrentUser } from "../server/auth";
+import { getSessionId } from "../lib/session";
+
+interface SettingsModalProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+type Tab = "profile" | "audio";
+
+export function SettingsModal({ open, onClose }: SettingsModalProps) {
+  const [tab, setTab] = useState<Tab>("profile");
+
+  /* Close on Escape — common modal etiquette. */
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  /* Block body scroll while open. */
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    /* Backdrop — dark vignette, click anywhere outside the dialog to close.
+       z-50 keeps the modal above all the page chrome (the floating
+       Profile button itself is z-30). */
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="absolute inset-0 backdrop-blur-sm"
+        style={{
+          background:
+            "radial-gradient(ellipse at center, rgba(5,10,20,0.78) 0%, rgba(5,10,20,0.95) 80%)",
+        }}
+        onMouseDown={onClose}
+      />
+
+      {/* Dialog — same chassis-with-stripes look as the lobby. */}
+      <div
+        className="relative w-full max-w-lg bg-chassis border border-rib shadow-2xl flex flex-col reveal"
+        style={{ maxHeight: "calc(100vh - 4rem)" }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="absolute top-0 left-0 right-0 h-1 tx-stripes opacity-80" />
+        <div className="absolute bottom-0 left-0 right-0 h-1 tx-stripes opacity-80" />
+
+        {/* Header */}
+        <header className="flex items-center justify-between border-b border-rib px-4 sm:px-5 py-3 pt-4 font-mono uppercase tracking-[0.25em] text-[10px] text-bone-dim">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-phosphor pulse-dot" />
+            <span>Operator Console</span>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close settings"
+            className="p-1.5 -mr-1.5 text-bone-dim hover:text-bone hover:bg-bone/8 border border-transparent hover:border-rib transition-colors"
+          >
+            <X size={16} strokeWidth={2.4} />
+          </button>
+        </header>
+
+        {/* Tab strip */}
+        <div className="flex border-b border-rib">
+          <TabButton
+            active={tab === "profile"}
+            onClick={() => {
+              play("menuButton");
+              setTab("profile");
+            }}
+            Icon={User}
+            label="Profile"
+          />
+          <TabButton
+            active={tab === "audio"}
+            onClick={() => {
+              play("menuButton");
+              setTab("audio");
+            }}
+            Icon={Sliders}
+            label="Audio"
+          />
+        </div>
+
+        {/* Body — independent scroll per tab so a long Audio tab doesn't
+            wreck the Profile form layout. */}
+        <div className="flex-1 overflow-auto scrollbar-dark px-4 sm:px-6 py-5">
+          {tab === "profile" ? <ProfileTab /> : <AudioTab />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  Icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  Icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  label: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 font-mono uppercase tracking-[0.25em] text-[11px] transition-colors relative ${
+        active
+          ? "text-amber bg-amber/5"
+          : "text-bone-dim hover:text-bone hover:bg-bone/5"
+      }`}
+    >
+      <Icon size={13} strokeWidth={2.4} />
+      <span>{label}</span>
+      {active && (
+        <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber" />
+      )}
+    </button>
+  );
+}
+
+/* ---------- Audio tab ---------- */
+
+function AudioTab() {
+  /* Subscribe to the audio store so slider positions stay in sync if a
+     change happens elsewhere (e.g. mute toggled). */
+  const tick = useSyncExternalStore(
+    subscribeAudio,
+    () => `${isMuted()}|${getBusVolume("music")}|${getBusVolume("sfx")}|${getBusVolume("timer")}`,
+    () => "ssr"
+  );
+  /* tick is only here to force re-render on changes; we read fresh values
+     below so we don't need to parse it. */
+  void tick;
+
+  const muted = isMuted();
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex items-center justify-between gap-3 border border-rib bg-void/40 px-3 py-2.5">
+        <div className="flex items-center gap-2.5 text-bone">
+          {muted ? (
+            <VolumeX size={16} strokeWidth={2.2} className="text-crimson" />
+          ) : (
+            <Volume2 size={16} strokeWidth={2.2} className="text-phosphor" />
+          )}
+          <div>
+            <div className="font-stencil tracking-[0.18em] text-sm">
+              {muted ? "MUTED" : "AUDIO ACTIVE"}
+            </div>
+            <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/70">
+              Master switch
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => {
+            const next = !muted;
+            setMuted(next);
+            if (!next) play("menuButton");
+          }}
+          className={`font-mono uppercase tracking-[0.25em] text-[10px] px-3 py-1.5 border transition-colors ${
+            muted
+              ? "border-phosphor/60 text-phosphor hover:bg-phosphor/10"
+              : "border-rib text-bone-dim hover:text-bone hover:bg-bone/5"
+          }`}
+        >
+          {muted ? "Unmute" : "Mute"}
+        </button>
+      </div>
+
+      <VolumeSlider
+        bus="music"
+        Icon={Music2}
+        label="Music"
+        sub="Menu and atmosphere"
+        previewSound={null}
+      />
+      <VolumeSlider
+        bus="sfx"
+        Icon={Headphones}
+        label="Sound Effects"
+        sub="Wires, buttons, presses"
+        previewSound="symbolPress"
+      />
+      <VolumeSlider
+        bus="timer"
+        Icon={TimerIcon}
+        label="Timer Beeps"
+        sub="Countdown ticks"
+        previewSound="timerTick"
+      />
+    </div>
+  );
+}
+
+function VolumeSlider({
+  bus,
+  Icon,
+  label,
+  sub,
+  previewSound,
+}: {
+  bus: Bus;
+  Icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  label: string;
+  sub: string;
+  previewSound:
+    | "menuButton"
+    | "symbolPress"
+    | "timerTick"
+    | "wireSnip"
+    | null;
+}) {
+  const value = getBusVolume(bus);
+  const pct = Math.round(value * 100);
+  /* Throttle preview-on-drag so the slider doesn't fire dozens of clicks. */
+  const lastPreviewRef = useRef(0);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1.5">
+        <div className="flex items-center gap-2 text-bone">
+          <Icon size={14} strokeWidth={2.2} className="text-bone-dim" />
+          <span className="font-stencil tracking-[0.18em] text-sm">
+            {label.toUpperCase()}
+          </span>
+          <span className="text-[9px] font-mono uppercase tracking-[0.25em] text-bone-dim/60">
+            {sub}
+          </span>
+        </div>
+        <span className="font-mono text-xs text-amber tabular-nums">
+          {pct}%
+        </span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        value={pct}
+        onChange={(e) => {
+          const v = Number(e.currentTarget.value) / 100;
+          setBusVolume(bus, v);
+          if (previewSound) {
+            const now = performance.now();
+            if (now - lastPreviewRef.current > 220) {
+              lastPreviewRef.current = now;
+              play(previewSound);
+            }
+          }
+        }}
+        className="bigboom-slider w-full"
+        aria-label={label}
+      />
+    </div>
+  );
+}
+
+/* ---------- Profile tab ---------- */
+
+function ProfileTab() {
+  const qc = useQueryClient();
+  const [sessionId, setSessionId] = useState("");
+  useEffect(() => setSessionId(getSessionId()), []);
+
+  const { data: user } = useQuery({
+    queryKey: ["currentUser", sessionId],
+    queryFn: () => getCurrentUser({ data: { sessionId } }),
+    enabled: !!sessionId,
+  });
+
+  const logoutMut = useMutation({
+    mutationFn: logout,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["currentUser"] }),
+  });
+
+  if (!sessionId) {
+    return (
+      <div className="text-center text-bone-dim font-mono text-xs uppercase tracking-[0.25em] py-6">
+        Loading…
+      </div>
+    );
+  }
+
+  if (user) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="border border-rib bg-void/40 p-4 flex items-center gap-3">
+          <div className="w-12 h-12 border border-amber/50 bg-amber/10 flex items-center justify-center">
+            <ShieldCheck size={20} className="text-amber" strokeWidth={2.2} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-bone-dim">
+              Signed in as
+            </div>
+            <div className="font-stencil text-xl tracking-wide text-bone truncate">
+              {user.username}
+            </div>
+            <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-bone-dim/60">
+              Member since {new Date(user.createdAt * 1000).toLocaleDateString()}
+            </div>
+          </div>
+        </div>
+
+        {/* Stats placeholder — wire this up when stats land. */}
+        <div className="border border-rib/60 bg-void/30 p-3">
+          <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-bone-dim mb-1">
+            Career stats
+          </div>
+          <p className="font-mono text-[11px] text-bone-dim/70 leading-relaxed">
+            Run stats will appear here once tracking is enabled. Bombs
+            armed, defusals, strikes, fastest solve — all tied to this
+            account.
+          </p>
+        </div>
+
+        <button
+          onClick={() => {
+            play("menuButton");
+            logoutMut.mutate({ data: { sessionId } });
+          }}
+          disabled={logoutMut.isPending}
+          className="flex items-center justify-center gap-2 border border-rib hover:border-crimson/60 hover:bg-crimson/8 text-bone-dim hover:text-crimson transition-colors py-2.5 font-mono text-xs uppercase tracking-[0.25em] disabled:opacity-50"
+        >
+          <LogOut size={13} strokeWidth={2.4} />
+          Sign out
+        </button>
+      </div>
+    );
+  }
+
+  return <SignedOutForm sessionId={sessionId} />;
+}
+
+function SignedOutForm({ sessionId }: { sessionId: string }) {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const signupMut = useMutation({
+    mutationFn: signup,
+    onSuccess: (res) => {
+      if (res.ok) {
+        qc.invalidateQueries({ queryKey: ["currentUser"] });
+        setError("");
+      } else {
+        setError(res.error);
+      }
+    },
+  });
+  const loginMut = useMutation({
+    mutationFn: login,
+    onSuccess: (res) => {
+      if (res.ok) {
+        qc.invalidateQueries({ queryKey: ["currentUser"] });
+        setError("");
+      } else {
+        setError(res.error);
+      }
+    },
+  });
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    play("menuButton");
+    if (mode === "login") {
+      loginMut.mutate({ data: { sessionId, username, password } });
+    } else {
+      signupMut.mutate({ data: { sessionId, username, password } });
+    }
+  }
+
+  const pending = loginMut.isPending || signupMut.isPending;
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-4">
+      <div className="text-[11px] font-mono uppercase tracking-[0.25em] text-bone-dim leading-relaxed">
+        {mode === "login"
+          ? "Sign in to keep your stats across devices."
+          : "Create an account to save your stats and progress."}
+      </div>
+
+      <label className="block">
+        <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-bone-dim mb-1">
+          Username
+        </div>
+        <input
+          type="text"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.currentTarget.value)}
+          className="w-full bg-void/60 border border-rib focus:border-amber/60 px-3 py-2 text-bone font-mono text-sm placeholder:text-steel-light focus:outline-none transition-colors"
+          placeholder="callsign"
+        />
+      </label>
+
+      <label className="block">
+        <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-bone-dim mb-1">
+          Password
+        </div>
+        <input
+          type="password"
+          autoComplete={mode === "login" ? "current-password" : "new-password"}
+          value={password}
+          onChange={(e) => setPassword(e.currentTarget.value)}
+          className="w-full bg-void/60 border border-rib focus:border-amber/60 px-3 py-2 text-bone font-mono text-sm placeholder:text-steel-light focus:outline-none transition-colors"
+          placeholder="••••••"
+        />
+      </label>
+
+      {error && (
+        <div className="flex items-center gap-2 border border-crimson/40 bg-crimson/8 px-3 py-2 text-crimson font-mono text-[11px]">
+          <AlertTriangle size={12} strokeWidth={2.2} />
+          {error}
+        </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={pending || !username || !password}
+        className="bg-amber text-void hover:bg-amber-glow disabled:bg-steel disabled:text-bone-dim transition-colors font-stencil text-base tracking-[0.18em] uppercase py-2.5 px-4"
+      >
+        {pending
+          ? mode === "login"
+            ? "Verifying…"
+            : "Enlisting…"
+          : mode === "login"
+          ? "Sign In"
+          : "Enlist"}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          play("menuButton");
+          setError("");
+          setMode(mode === "login" ? "signup" : "login");
+        }}
+        className="text-[11px] font-mono uppercase tracking-[0.25em] text-bone-dim hover:text-bone transition-colors text-center"
+      >
+        {mode === "login"
+          ? "No account yet? Enlist now."
+          : "Already enlisted? Sign in."}
+      </button>
+    </form>
+  );
+}

@@ -53,6 +53,27 @@ export function getDb(): Database {
       content TEXT NOT NULL,
       created_at INTEGER DEFAULT (unixepoch())
     );
+
+    /* Account system — usernames are case-insensitive (NOCASE collation)
+       so "Alice" and "alice" can't both register. password_hash is the
+       Bun-bcrypt encoded string (Bun.password.hash). */
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch())
+    );
+
+    /* Maps a per-tab session_id (the same one used to claim a Defuser/
+       Expert slot) to the signed-in user, if any. A session can be linked
+       to at most one user; a user can be linked from many sessions
+       (multiple tabs/devices). */
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      session_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      created_at INTEGER DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
   `);
 
   return _db;

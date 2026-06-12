@@ -8,6 +8,7 @@ import { MemoryModule } from "./MemoryModule";
 import { MorseModule } from "./MorseModule";
 import { PasswordModule } from "./PasswordModule";
 import { Timer } from "./Timer";
+import { ProfileButton } from "../ProfileButton";
 import {
   cutWire,
   tapButton,
@@ -153,13 +154,16 @@ export function BombView({ gameState }: BombViewProps) {
           </div>
         </div>
 
-        {/* Mini status bar under header */}
-        <div className="hidden sm:flex max-w-6xl mx-auto mt-2 items-center justify-between text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/70">
-          <div className="flex items-center gap-2">
+        {/* Mini status bar under header — telemetry / bay readout
+            on the left, profile/settings chip on the right. */}
+        <div className="max-w-6xl mx-auto mt-2 flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/70 gap-2">
+          <div className="hidden sm:flex items-center gap-2">
             <Activity size={10} className="text-phosphor" />
             <span>Telemetry · Live</span>
           </div>
-          <span>Defusal Bay · Unit 7</span>
+          <span className="hidden md:inline">Defusal Bay · Unit 7</span>
+          <ProfileButton variant="dark" showLabel={false} className="sm:hidden" />
+          <ProfileButton variant="dark" className="hidden sm:flex" />
         </div>
       </div>
 

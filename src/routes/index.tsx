@@ -3,7 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { createGame } from "../server/game";
 import { getSessionId } from "../lib/session";
 import { play, preloadAll, playMusic, stopMusic } from "../lib/sound";
-import { MuteButton } from "../components/MuteButton";
+import { ProfileButton } from "../components/ProfileButton";
 import { Bomb, ArrowRight, Link2, AlertTriangle } from "lucide-react";
 import { DiscordIcon } from "../components/icons/Discord";
 
@@ -110,7 +110,7 @@ function HomePage() {
             <span className="hidden sm:inline">RIA-2074</span>
             <span className="hidden sm:inline opacity-50">//</span>
             <span className="hidden sm:inline">Site 11 // Containment</span>
-            <MuteButton variant="dark" className="opacity-100" />
+            <ProfileButton variant="dark" />
           </div>
         </header>
 

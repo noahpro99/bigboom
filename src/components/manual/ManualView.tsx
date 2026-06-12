@@ -21,6 +21,7 @@ import {
 } from "../../lib/types";
 import { BookOpen, ChevronLeft, ChevronRight } from "lucide-react";
 import { play } from "../../lib/sound";
+import { ProfileButton } from "../ProfileButton";
 
 interface ManualViewProps {
   seed: number;
@@ -178,16 +179,22 @@ export function ManualView({ seed }: ManualViewProps) {
           onAnimationEnd={handleAnimationEnd}
           className={`min-h-full ${animClass}`}
         >
-          {/* Running header — printed on the page, no background change. */}
-          <header className="flex items-baseline justify-between px-4 sm:px-10 pt-3 pb-2 font-serif italic text-[11px] text-ink/65">
+          {/* Running header — printed on the page, no background change.
+             Profile/settings chip lives at the far right; even though
+             it's a real button it's styled in the same paper-ink tone
+             so it reads as a printed icon on the page. */}
+          <header className="flex items-center justify-between gap-3 px-4 sm:px-10 pt-3 pb-2 font-serif italic text-[11px] text-ink/65">
             <span className="flex items-center gap-1.5">
               <BookOpen size={11} strokeWidth={2} className="opacity-70" />
               Bomb Defusal · Field Manual
             </span>
-            <span className="hidden sm:inline">
+            <span className="hidden md:inline">
               Issue 47 — Restricted Distribution
             </span>
-            <span>§{selectedIdx + 1} of {pages.length}</span>
+            <span className="flex items-center gap-3">
+              <span className="hidden sm:inline">§{selectedIdx + 1} of {pages.length}</span>
+              <ProfileButton variant="light" showLabel={false} />
+            </span>
           </header>
           <hr className="ink-rule-hair mx-4 sm:mx-10" />
 

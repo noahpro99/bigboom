@@ -15,6 +15,26 @@ export type SoundKey =
 
 export type MusicKey = "menuMusic";
 
+/* Every sound belongs to exactly one mix bus. The Settings modal exposes
+   one master slider per bus; the per-key BASE_VOLUMES below give the
+   relative loudness within a bus. Effective volume at play time is
+   BASE_VOLUMES[key] * busVolume[bus]; muted overrides everything to silent. */
+export type Bus = "music" | "sfx" | "timer";
+
+const BUS: Record<SoundKey, Exclude<Bus, "music">> = {
+  menuButton: "sfx",
+  wireSnip: "sfx",
+  buttonDown: "sfx",
+  buttonUp: "sfx",
+  symbolPress: "sfx",
+  pageTurn: "sfx",
+  wrongBuzzer: "sfx",
+  explosion: "sfx",
+  win: "sfx",
+  timerTick: "timer",
+  timerCritical: "timer",
+};
+
 const FILES: Record<SoundKey, string> = {
   menuButton: "/sounds/menu-button.ogg",
   wireSnip: "/sounds/wire-snip.ogg",
@@ -29,7 +49,7 @@ const FILES: Record<SoundKey, string> = {
   win: "/sounds/win.ogg",
 };
 
-const VOLUMES: Record<SoundKey, number> = {
+const BASE_VOLUMES: Record<SoundKey, number> = {
   menuButton: 0.45,
   wireSnip: 0.75,
   buttonDown: 0.6,
@@ -46,31 +66,73 @@ const VOLUMES: Record<SoundKey, number> = {
 const MUSIC_FILES: Record<MusicKey, string> = {
   menuMusic: "/sounds/menu-music.ogg",
 };
-
-// Background music sits well below SFX so it's atmosphere, not in the way.
-const MUSIC_VOLUMES: Record<MusicKey, number> = {
+const MUSIC_BASE: Record<MusicKey, number> = {
   menuMusic: 0.12,
 };
 
 const MUTE_KEY = "bigboom-muted";
+const VOL_KEY = "bigboom-volumes";
+
+interface PersistedVolumes {
+  music: number;
+  sfx: number;
+  timer: number;
+}
+
+const DEFAULT_VOLUMES: PersistedVolumes = {
+  music: 1,
+  sfx: 1,
+  timer: 1,
+};
+
+function clamp01(v: number): number {
+  return Math.max(0, Math.min(1, v));
+}
+
+let busVolumes: PersistedVolumes = { ...DEFAULT_VOLUMES };
+let muted = false;
 
 const cache = new Map<SoundKey, Howl>();
 const musicCache = new Map<MusicKey, Howl>();
 const activeMusic = new Set<MusicKey>();
-// Per-music target volume (the value to play at when not muted). Lets us
-// "duck" the music for the tense parts of the game and bring it back later.
-const musicTargetVolume = new Map<MusicKey, number>();
-let muted = false;
 const listeners = new Set<() => void>();
 
 if (typeof window !== "undefined") {
   muted = window.localStorage.getItem(MUTE_KEY) === "1";
+  try {
+    const raw = window.localStorage.getItem(VOL_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PersistedVolumes>;
+      busVolumes = {
+        music: clamp01(parsed.music ?? DEFAULT_VOLUMES.music),
+        sfx: clamp01(parsed.sfx ?? DEFAULT_VOLUMES.sfx),
+        timer: clamp01(parsed.timer ?? DEFAULT_VOLUMES.timer),
+      };
+    }
+  } catch {
+    /* malformed JSON — fall back to defaults */
+  }
+}
+
+function persistVolumes() {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(VOL_KEY, JSON.stringify(busVolumes));
+}
+
+function effective(key: SoundKey): number {
+  if (muted) return 0;
+  return BASE_VOLUMES[key] * busVolumes[BUS[key]];
+}
+
+function effectiveMusic(key: MusicKey): number {
+  if (muted) return 0;
+  return MUSIC_BASE[key] * busVolumes.music;
 }
 
 function load(key: SoundKey): Howl {
   let h = cache.get(key);
   if (!h) {
-    h = new Howl({ src: [FILES[key]], volume: VOLUMES[key], preload: true });
+    h = new Howl({ src: [FILES[key]], volume: effective(key), preload: true });
     cache.set(key, h);
   }
   return h;
@@ -81,10 +143,10 @@ function loadMusic(key: MusicKey): Howl {
   if (!h) {
     h = new Howl({
       src: [MUSIC_FILES[key]],
-      volume: muted ? 0 : MUSIC_VOLUMES[key],
+      volume: effectiveMusic(key),
       loop: true,
       preload: true,
-      html5: true, // stream long files instead of decoding to buffer
+      html5: true,
     });
     musicCache.set(key, h);
   }
@@ -93,36 +155,30 @@ function loadMusic(key: MusicKey): Howl {
 
 export function play(key: SoundKey) {
   if (typeof window === "undefined" || muted) return;
-  load(key).play();
-}
-
-function applyMusicVolume(key: MusicKey) {
-  const h = musicCache.get(key);
-  if (!h) return;
-  const target = musicTargetVolume.get(key) ?? MUSIC_VOLUMES[key];
-  h.volume(target);
+  const h = load(key);
+  h.volume(effective(key));
+  h.play();
 }
 
 function applyMusicPlayState(key: MusicKey) {
   const h = musicCache.get(key);
   if (!h) return;
-  const wantsPlaying = activeMusic.has(key) && !muted;
+  const wantsPlaying = activeMusic.has(key) && !muted && busVolumes.music > 0;
   if (wantsPlaying && !h.playing()) h.play();
   else if (!wantsPlaying && h.playing()) h.pause();
 }
 
-export function playMusic(key: MusicKey, volume?: number) {
+function applyAllVolumes() {
+  cache.forEach((h, key) => h.volume(effective(key)));
+  musicCache.forEach((h, key) => h.volume(effectiveMusic(key)));
+  activeMusic.forEach(applyMusicPlayState);
+}
+
+export function playMusic(key: MusicKey) {
   if (typeof window === "undefined") return;
   loadMusic(key);
   activeMusic.add(key);
-  if (typeof volume === "number") musicTargetVolume.set(key, volume);
-  applyMusicVolume(key);
   applyMusicPlayState(key);
-}
-
-export function setMusicVolume(key: MusicKey, volume: number) {
-  musicTargetVolume.set(key, volume);
-  applyMusicVolume(key);
 }
 
 export function stopMusic(key: MusicKey) {
@@ -141,9 +197,7 @@ export function setMuted(v: boolean) {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(MUTE_KEY, v ? "1" : "0");
   }
-  // Mute pauses every track outright (cleaner than volume=0 with html5
-  // streaming). Unmute resumes from the same position.
-  activeMusic.forEach(applyMusicPlayState);
+  applyAllVolumes();
   listeners.forEach((l) => l());
 }
 
@@ -151,9 +205,23 @@ export function isMuted(): boolean {
   return muted;
 }
 
-export function subscribeMuted(cb: () => void): () => void {
+export function getBusVolume(bus: Bus): number {
+  return busVolumes[bus];
+}
+
+export function setBusVolume(bus: Bus, value: number) {
+  busVolumes[bus] = clamp01(value);
+  persistVolumes();
+  applyAllVolumes();
+  listeners.forEach((l) => l());
+}
+
+export function subscribeAudio(cb: () => void): () => void {
   listeners.add(cb);
   return () => {
     listeners.delete(cb);
   };
 }
+
+/* Backwards-compat alias — older imports used subscribeMuted. */
+export const subscribeMuted = subscribeAudio;

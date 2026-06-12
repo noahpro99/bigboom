@@ -11,7 +11,7 @@ import {
 } from "../server/game";
 import { BombView } from "../components/bomb/BombView";
 import { ManualView } from "../components/manual/ManualView";
-import { MuteButton } from "../components/MuteButton";
+import { ProfileButton } from "../components/ProfileButton";
 import { SoundLayer } from "../components/SoundLayer";
 import { getSessionId } from "../lib/session";
 import { play, preloadAll, playMusic, stopMusic } from "../lib/sound";
@@ -219,11 +219,6 @@ function GamePage() {
         <ManualView seed={game.seed} />
       )}
 
-      {/* Floating mute toggle */}
-      <div className="absolute top-2 right-2 z-30">
-        <MuteButton variant={playerRole === "defuser" ? "dark" : "light"} />
-      </div>
-
       {isOver && (
         <GameOverOverlay
           status={game.status}
@@ -299,9 +294,11 @@ function LobbyView({
       <div className="absolute top-0 left-0 right-0 h-1.5 tx-stripes opacity-80" />
       <div className="absolute bottom-0 left-0 right-0 h-1.5 tx-stripes opacity-80" />
 
-      {/* Floating mute toggle */}
-      <div className="absolute top-3 right-3 z-30">
-        <MuteButton variant="dark" />
+      {/* Profile + Settings — sits in the top-right corner, but as a
+         small chassis-tile chip that visually belongs to the briefing
+         border rather than floating over content. */}
+      <div className="absolute top-4 right-4 z-30">
+        <ProfileButton variant="dark" />
       </div>
 
       <div className="min-h-screen flex flex-col items-center justify-center px-4 py-10 relative z-10">

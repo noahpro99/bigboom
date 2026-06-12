@@ -329,6 +329,67 @@ button:disabled,
     0 0.6px 0 rgba(40, 25, 10, 0.32);
 }
 
+/* ----- Themed range slider (for Settings/Audio sliders) -----
+   Industrial-amber thumb on a riveted track. Same chassis vocabulary as
+   the lobby. WebKit and Firefox styling are independent so the same
+   values are written for both ::-*-thumb / ::-*-track. */
+.bigboom-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  width: 100%;
+  height: 22px;
+  cursor: pointer;
+}
+.bigboom-slider:focus {
+  outline: none;
+}
+.bigboom-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.45), rgba(0,0,0,0.3)),
+    var(--color-void);
+  border: 1px solid var(--color-rib);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.7);
+}
+.bigboom-slider::-moz-range-track {
+  height: 6px;
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0.45), rgba(0,0,0,0.3)),
+    var(--color-void);
+  border: 1px solid var(--color-rib);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.7);
+}
+.bigboom-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -7px;
+  width: 18px;
+  height: 20px;
+  background:
+    linear-gradient(180deg, var(--color-amber-glow) 0%, var(--color-amber) 60%, #b35400 100%);
+  border: 1px solid #5a2c00;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 160, 0.55),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.6);
+  cursor: grab;
+}
+.bigboom-slider::-webkit-slider-thumb:active { cursor: grabbing; }
+.bigboom-slider::-moz-range-thumb {
+  width: 18px;
+  height: 20px;
+  background:
+    linear-gradient(180deg, var(--color-amber-glow) 0%, var(--color-amber) 60%, #b35400 100%);
+  border: 1px solid #5a2c00;
+  border-radius: 0;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 160, 0.55),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.4),
+    0 2px 4px rgba(0, 0, 0, 0.6);
+  cursor: grab;
+}
+
 /* Dotted leader — the run of evenly-spaced dots between a list label
    and a right-aligned value (table-of-contents style). Used in the
    morse pool to connect a word to its frequency. */
