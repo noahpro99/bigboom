@@ -78,26 +78,59 @@ export function ManualView({ seed }: ManualViewProps) {
       ? "animate-page-enter-from-right"
       : "";
 
-  // Touch-swipe support: a horizontal-dominant swipe over the threshold
-  // flips the page. Touchstart records start; touchend computes delta.
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  // Unified swipe (touch + mouse + pen) via pointer events. We only "take
+  // over" the gesture once horizontal movement clearly dominates, otherwise
+  // we let vertical scroll and text selection proceed normally.
+  const pointerRef = useRef<{
+    x: number;
+    y: number;
+    pointerId: number;
+    captured: boolean;
+  } | null>(null);
   const SWIPE_THRESHOLD = 55;
+  const TAKEOVER_THRESHOLD = 10;
 
-  function handleTouchStart(e: React.TouchEvent) {
-    const t = e.touches[0];
-    if (!t) return;
-    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  function handlePointerDown(e: React.PointerEvent) {
+    // Only left mouse button counts; touch and pen always do.
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointerRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      pointerId: e.pointerId,
+      captured: false,
+    };
   }
-  function handleTouchEnd(e: React.TouchEvent) {
-    const start = touchStartRef.current;
-    if (!start) return;
-    touchStartRef.current = null;
-    const t = e.changedTouches[0];
-    if (!t) return;
-    const dx = t.clientX - start.x;
-    const dy = t.clientY - start.y;
+
+  function handlePointerMove(e: React.PointerEvent) {
+    const s = pointerRef.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    if (
+      !s.captured &&
+      Math.abs(dx) > TAKEOVER_THRESHOLD &&
+      Math.abs(dx) > Math.abs(dy) * 1.2
+    ) {
+      s.captured = true;
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {
+        /* capture not supported — fall back to plain delta tracking */
+      }
+      // Clear any text selection that may have started on the way down.
+      if (typeof window !== "undefined") {
+        window.getSelection()?.removeAllRanges();
+      }
+    }
+  }
+
+  function handlePointerUp(e: React.PointerEvent) {
+    const s = pointerRef.current;
+    if (!s || s.pointerId !== e.pointerId) return;
+    pointerRef.current = null;
+    if (!s.captured) return;
+    const dx = e.clientX - s.x;
     if (Math.abs(dx) < SWIPE_THRESHOLD) return;
-    if (Math.abs(dx) < Math.abs(dy) * 1.4) return; // mostly vertical → ignore
     if (dx < 0) flipTo(selectedIdxRef.current + 1);
     else flipTo(selectedIdxRef.current - 1);
   }
@@ -145,11 +178,18 @@ export function ManualView({ seed }: ManualViewProps) {
         </button>
       </div>
 
-      {/* Book area — full-width scroll, swipe drives page changes. */}
+      {/* Book area — full-width scroll, swipe (touch or mouse drag) drives
+          page changes. `touch-action: pan-y` lets vertical scroll work
+          natively, we only steal horizontal-dominant gestures. */}
       <div
         className="flex-1 overflow-auto scrollbar-ink min-h-0 tx-paper-lines"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
+        style={{ touchAction: "pan-y" }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={() => {
+          pointerRef.current = null;
+        }}
       >
         <main
           key={selectedIdx}
