@@ -585,16 +585,27 @@ export function generateManualPages(seed: number): ManualPage[] {
     ],
   };
 
-  const immediateRows = buttonConfig.releaseImmediatelyRules.map((r) => [
-    r.color.toUpperCase(),
-    r.label,
-    "Press and immediately release",
-  ]);
+  const immediateRules = buttonConfig.releaseImmediatelyRules.map((r) => ({
+    type: "rule" as const,
+    condition: `the button is ${r.color.toUpperCase()} and labelled ${r.label}`,
+    action: "tap (press and immediately release)",
+  }));
+  const holdRule = {
+    type: "rule" as const,
+    condition: `the bomb has ${buttonConfig.holdBatteryThreshold} or more batteries and the button is labelled ${buttonConfig.holdBatteryLabel}`,
+    action: "hold the button down",
+  };
+  const otherwiseRule = {
+    type: "rule" as const,
+    condition: "none of the above apply",
+    action: "tap (press and immediately release)",
+  };
 
-  const stripRows = buttonConfig.stripRules.map((r) => [
-    r.stripColor.toUpperCase(),
-    `Release when the timer's last digit is ${r.releaseValue}`,
-  ]);
+  const stripRules = buttonConfig.stripRules.map((r) => ({
+    type: "rule" as const,
+    condition: `the LED strip is ${r.stripColor.toUpperCase()}`,
+    action: `release when the timer's last digit is ${r.releaseValue}`,
+  }));
 
   const buttonPage: ManualPage = {
     moduleType: "button",
@@ -602,31 +613,11 @@ export function generateManualPages(seed: number): ManualPage[] {
     sections: [
       {
         heading: "Tap or hold? — apply the first rule that matches",
-        content: [
-          {
-            type: "table",
-            headers: ["Color", "Label", "Action"],
-            rows: [
-              ...immediateRows,
-              [
-                "Any",
-                "Any",
-                `If ${buttonConfig.holdBatteryThreshold}+ batteries and label is ${buttonConfig.holdBatteryLabel}, HOLD`,
-              ],
-              ["Any", "Any", "Otherwise: tap (press and immediately release)"],
-            ],
-          },
-        ],
+        content: [...immediateRules, holdRule, otherwiseRule],
       },
       {
-        heading: "If holding — release timing by LED strip colour",
-        content: [
-          {
-            type: "table",
-            headers: ["Strip color", "Release when"],
-            rows: stripRows,
-          },
-        ],
+        heading: "If holding, release timing by LED strip colour",
+        content: stripRules,
       },
     ],
   };

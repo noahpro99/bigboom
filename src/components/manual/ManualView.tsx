@@ -78,6 +78,30 @@ export function ManualView({ seed }: ManualViewProps) {
       ? "animate-page-enter-from-right"
       : "";
 
+  // Touch-swipe support: a horizontal-dominant swipe over the threshold
+  // flips the page. Touchstart records start; touchend computes delta.
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const SWIPE_THRESHOLD = 55;
+
+  function handleTouchStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  }
+  function handleTouchEnd(e: React.TouchEvent) {
+    const start = touchStartRef.current;
+    if (!start) return;
+    touchStartRef.current = null;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < SWIPE_THRESHOLD) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.4) return; // mostly vertical → ignore
+    if (dx < 0) flipTo(selectedIdxRef.current + 1);
+    else flipTo(selectedIdxRef.current - 1);
+  }
+
   return (
     <div className="h-full flex flex-col tx-paper text-ink">
       {/* Classification banner */}
@@ -93,94 +117,53 @@ export function ManualView({ seed }: ManualViewProps) {
         </div>
       </div>
 
-      {/* Book area: arrows on the sides, animated page in the middle */}
-      {/* Book area — the entire row scrolls together so the scrollbar sits at
-          the far right edge (past the next-page arrow). Arrows use
-          `position: sticky` to stay centered while the page text scrolls. */}
-      <div className="flex-1 overflow-auto scrollbar-ink min-h-0 tx-paper-lines">
-        <div className="flex items-stretch min-h-full">
-          <PageArrow
-            dir="prev"
-            disabled={atFirst || animating}
-            onClick={() => flipTo(selectedIdx - 1)}
-          />
-
-          <main
-            key={selectedIdx}
-            onAnimationEnd={handleAnimationEnd}
-            className={`flex-1 py-5 sm:py-10 px-4 sm:px-10 min-w-0 ${animClass}`}
-          >
-            <ManualPageView
-              page={page}
-              index={selectedIdx}
-              total={pages.length}
-            />
-          </main>
-
-          <PageArrow
-            dir="next"
-            disabled={atLast || animating}
-            onClick={() => flipTo(selectedIdx + 1)}
-          />
-        </div>
+      {/* Top nav strip: discoverable affordance for swipe + a fallback for
+          desktop users who can't swipe (keyboard arrows also work). */}
+      <div className="flex-none flex items-center justify-between gap-2 px-3 sm:px-4 py-1.5 bg-paper-dim/50 border-b border-ink/15 text-[10px] font-mono uppercase tracking-[0.25em] text-ink/60">
+        <button
+          onClick={() => flipTo(selectedIdx - 1)}
+          disabled={atFirst || animating}
+          aria-label="Previous page"
+          className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors px-2 py-1"
+        >
+          <ChevronLeft size={14} strokeWidth={2.5} />
+          <span className="hidden sm:inline">Prev</span>
+        </button>
+        <span className="flex items-center gap-2 opacity-80">
+          <span>§{selectedIdx + 1} / {pages.length}</span>
+          <span className="opacity-60 hidden sm:inline">·</span>
+          <span className="opacity-60 hidden sm:inline">swipe ←→</span>
+        </span>
+        <button
+          onClick={() => flipTo(selectedIdx + 1)}
+          disabled={atLast || animating}
+          aria-label="Next page"
+          className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors px-2 py-1"
+        >
+          <span className="hidden sm:inline">Next</span>
+          <ChevronRight size={14} strokeWidth={2.5} />
+        </button>
       </div>
 
-      {/* Page indicator dots */}
-      <div className="flex-none flex items-center justify-center gap-2.5 py-3 border-t border-ink/15 bg-paper-dim/40">
-        {pages.map((_, i) => {
-          const isActive = i === selectedIdx;
-          return (
-            <button
-              key={i}
-              onClick={() => flipTo(i)}
-              disabled={animating}
-              aria-label={`Go to section ${i + 1}`}
-              className={`transition-all rounded-full ${
-                isActive
-                  ? "w-6 h-2 bg-ink"
-                  : "w-2 h-2 bg-ink/25 hover:bg-ink/45"
-              }`}
-            />
-          );
-        })}
+      {/* Book area — full-width scroll, swipe drives page changes. */}
+      <div
+        className="flex-1 overflow-auto scrollbar-ink min-h-0 tx-paper-lines"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
+        <main
+          key={selectedIdx}
+          onAnimationEnd={handleAnimationEnd}
+          className={`min-h-full py-5 sm:py-10 px-4 sm:px-10 ${animClass}`}
+        >
+          <ManualPageView
+            page={page}
+            index={selectedIdx}
+            total={pages.length}
+          />
+        </main>
       </div>
     </div>
-  );
-}
-
-function PageArrow({
-  dir,
-  disabled,
-  onClick,
-}: {
-  dir: "prev" | "next";
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  const Icon = dir === "prev" ? ChevronLeft : ChevronRight;
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={dir === "prev" ? "Previous page" : "Next page"}
-      className={`shrink-0 self-stretch w-12 flex items-center justify-center transition-all group z-10 ${
-        disabled
-          ? "opacity-20 cursor-default"
-          : "hover:bg-ink/8 active:bg-ink/12 cursor-pointer"
-      }`}
-    >
-      {/* Sticky inner so the icon stays vertically centered in the viewport
-         while the page text scrolls and the button hit-area fills the column */}
-      <span className="sticky top-1/2 -translate-y-1/2 flex items-center justify-center">
-        <Icon
-          size={28}
-          strokeWidth={2.25}
-          className={`text-ink/70 ${
-            disabled ? "" : "group-hover:text-ink group-hover:scale-110"
-          } transition-all`}
-        />
-      </span>
-    </button>
   );
 }
 
