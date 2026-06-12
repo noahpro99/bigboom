@@ -11,6 +11,7 @@ import {
   pressSymbol,
 } from "../../server/game";
 import { useDisplayTime } from "../../lib/useDisplayTime";
+import { play } from "../../lib/sound";
 import type { GameState, Module } from "../../lib/types";
 import { Skull, Wifi, Activity } from "lucide-react";
 
@@ -30,14 +31,25 @@ export function BombView({ gameState }: BombViewProps) {
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ["game", game.id] });
 
-  const cutMut = useMutation({ mutationFn: cutWire, onSuccess: invalidate });
-  const tapMut = useMutation({ mutationFn: tapButton, onSuccess: invalidate });
+  // Fire the wrong-buzzer whenever a defuser action was scored incorrect.
+  // The server returns { correct: boolean } on every scoring mutation; if it's
+  // false we play the buzzer in addition to invalidating the query.
+  const onActionResult = (result: { correct?: boolean } | void) => {
+    if (result && result.correct === false) play("wrongBuzzer");
+    invalidate();
+  };
+
+  const cutMut = useMutation({ mutationFn: cutWire, onSuccess: onActionResult });
+  const tapMut = useMutation({ mutationFn: tapButton, onSuccess: onActionResult });
   const startMut = useMutation({ mutationFn: startHold, onSuccess: invalidate });
   const releaseMut = useMutation({
     mutationFn: releaseHold,
-    onSuccess: invalidate,
+    onSuccess: onActionResult,
   });
-  const pressMut = useMutation({ mutationFn: pressSymbol, onSuccess: invalidate });
+  const pressMut = useMutation({
+    mutationFn: pressSymbol,
+    onSuccess: onActionResult,
+  });
 
   const disabled = game.status !== "active";
 

@@ -7,6 +7,7 @@ export type SoundKey =
   | "buttonUp"
   | "symbolPress"
   | "pageTurn"
+  | "wrongBuzzer"
   | "timerTick"
   | "timerCritical"
   | "explosion";
@@ -20,6 +21,7 @@ const FILES: Record<SoundKey, string> = {
   buttonUp: "/sounds/toggle-up.ogg",
   symbolPress: "/sounds/clicky-button.ogg",
   pageTurn: "/sounds/page-turn.ogg",
+  wrongBuzzer: "/sounds/wrong-buzzer.ogg",
   timerTick: "/sounds/countdown-beep.ogg",
   timerCritical: "/sounds/countdown-ending.ogg",
   explosion: "/sounds/explosion.ogg",
@@ -32,6 +34,7 @@ const VOLUMES: Record<SoundKey, number> = {
   buttonUp: 0.6,
   symbolPress: 0.55,
   pageTurn: 0.55,
+  wrongBuzzer: 0.7,
   timerTick: 0.3,
   timerCritical: 0.55,
   explosion: 0.85,
