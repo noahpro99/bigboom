@@ -154,91 +154,86 @@ export function ManualView({ seed }: ManualViewProps) {
   }
 
   return (
-    <div className="h-full flex flex-col tx-paper text-ink">
-      {/* Classification banner */}
-      <div className="flex-none flex items-center justify-between px-4 sm:px-6 py-2 bg-ink text-paper border-b-2 border-ink">
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] font-mono">
-          <BookOpen size={12} strokeWidth={2.5} />
-          <span>Bomb Defusal · Field Manual</span>
-        </div>
-        <div className="hidden sm:flex items-center gap-3 text-[10px] uppercase tracking-[0.3em] font-mono opacity-70">
-          <span>Issue 47</span>
-          <span>·</span>
-          <span>Restricted Distribution</span>
-        </div>
-      </div>
-
-      {/* Top nav strip: discoverable affordance for swipe + a fallback for
-          desktop users who can't swipe (keyboard arrows also work). */}
-      <div className="flex-none flex items-center justify-between gap-2 px-3 sm:px-4 py-1.5 bg-paper-dim/50 border-b border-ink/15 text-[10px] font-mono uppercase tracking-[0.25em] text-ink/60">
-        <button
-          onClick={() => flipTo(selectedIdx - 1)}
-          disabled={atFirst || animating}
-          aria-label="Previous page"
-          className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors px-2 py-1"
-        >
-          <ChevronLeft size={14} strokeWidth={2.5} />
-          <span className="hidden sm:inline">Prev</span>
-        </button>
-        <span className="flex items-center gap-2 opacity-80">
-          <span>§{selectedIdx + 1} / {pages.length}</span>
-          <span className="opacity-60 hidden sm:inline">·</span>
-          <span className="opacity-60 hidden sm:inline">swipe ←→</span>
-        </span>
-        <button
-          onClick={() => flipTo(selectedIdx + 1)}
-          disabled={atLast || animating}
-          aria-label="Next page"
-          className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors px-2 py-1"
-        >
-          <span className="hidden sm:inline">Next</span>
-          <ChevronRight size={14} strokeWidth={2.5} />
-        </button>
-      </div>
-
-      {/* Book area — full-width scroll, swipe (touch or mouse drag) drives
-          page changes. `touch-action: pan-y` lets vertical scroll work
-          natively, we only steal horizontal-dominant gestures.
-          The `paper-stack` wrapper draws the visible cut edges of the
-          surrounding pages at the left/right, so the active sheet reads
-          as one page of a larger block — mid-flip, the leaving sheet
-          slides off those edges and exposes more of the stack. */}
+    /* One piece of paper — the manual area IS the sheet. The shadow on
+       the sheet gives it elevation against the dark chassis; the
+       scrollable area inside is transparent so the paper texture is
+       continuous from edge to edge. */
+    <div
+      className={`h-full relative paper-stack paper-sheet manual-paper tx-paper text-ink overflow-hidden ${
+        animating ? "is-flipping" : ""
+      }`}
+    >
       <div
-        className={`flex-1 min-h-0 overflow-hidden relative paper-stack ${
-          animating ? "is-flipping" : ""
-        }`}
+        className="absolute inset-0 overflow-auto scrollbar-ink tx-paper-lines"
+        style={{ touchAction: "pan-y" }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={() => {
+          pointerRef.current = null;
+        }}
       >
-        <div
-          className="absolute inset-0 overflow-auto scrollbar-ink tx-paper-lines"
-          style={{ touchAction: "pan-y" }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={() => {
-            pointerRef.current = null;
-          }}
+        <main
+          key={selectedIdx}
+          onAnimationEnd={handleAnimationEnd}
+          className={`min-h-full ${animClass}`}
         >
-          <main
-            key={selectedIdx}
-            onAnimationEnd={handleAnimationEnd}
-            className={`min-h-full paper-sheet tx-paper py-5 sm:py-10 px-4 sm:px-10 mx-2 ${animClass}`}
-          >
+          {/* Running header — printed on the page, no background change. */}
+          <header className="flex items-baseline justify-between px-4 sm:px-10 pt-3 pb-2 font-serif italic text-[11px] text-ink/65">
+            <span className="flex items-center gap-1.5">
+              <BookOpen size={11} strokeWidth={2} className="opacity-70" />
+              Bomb Defusal · Field Manual
+            </span>
+            <span className="hidden sm:inline">
+              Issue 47 — Restricted Distribution
+            </span>
+            <span>§{selectedIdx + 1} of {pages.length}</span>
+          </header>
+          <hr className="ink-rule-hair mx-4 sm:mx-10" />
+
+          <div className="py-5 sm:py-8 px-4 sm:px-10">
             <ManualPageView
               page={page}
               index={selectedIdx}
               total={pages.length}
             />
-          </main>
-        </div>
+          </div>
+
+          {/* Foot nav — printed tap targets. */}
+          <footer className="px-4 sm:px-10 pb-5">
+            <hr className="ink-rule-hair mb-2" />
+            <div className="flex items-baseline justify-between font-serif italic text-[12px] text-ink/70">
+              <button
+                onClick={() => flipTo(selectedIdx - 1)}
+                disabled={atFirst || animating}
+                aria-label="Previous page"
+                className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors"
+              >
+                <ChevronLeft size={13} strokeWidth={2.2} />
+                <span>prev</span>
+              </button>
+              <span className="text-ink/50 hidden sm:inline">swipe ←→</span>
+              <button
+                onClick={() => flipTo(selectedIdx + 1)}
+                disabled={atLast || animating}
+                aria-label="Next page"
+                className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors"
+              >
+                <span>next</span>
+                <ChevronRight size={13} strokeWidth={2.2} />
+              </button>
+            </div>
+          </footer>
+        </main>
       </div>
     </div>
   );
 }
 
-/* Single layout for all viewports.
-   - Mobile-first sizes (compact padding, small ink labels above each cell).
-   - As the container grows the cards expand proportionally; the same
-   structure works on every breakpoint. */
+/* Plain printed table — real <table> for honest alignment. No card,
+   no background, no inverted header bar. The header is just bold serif
+   text under a thin ink rule, and rows are separated by hairlines, the
+   way a real manual prints tables. */
 function ResponsiveTable({
   headers,
   rows,
@@ -246,84 +241,93 @@ function ResponsiveTable({
   headers: string[];
   rows: string[][];
 }) {
-  // Use a CSS grid sized by content: first column auto (badges / numbers),
-  // middle columns 1fr, last column auto. Falls back to even split if there
-  // are only two columns.
-  const cols = headers.length;
-  const gridTemplate =
-    cols === 1
-      ? "1fr"
-      : cols === 2
-      ? "auto 1fr"
-      : `auto repeat(${cols - 2}, minmax(0, 1fr)) auto`;
   return (
-    <div className="border border-ink/30 manual-card bg-paper mb-3 overflow-hidden">
-      {/* Header row */}
-      <div
-        className="grid bg-ink text-paper"
-        style={{ gridTemplateColumns: gridTemplate }}
-      >
-        {headers.map((h, i) => (
-          <div
-            key={i}
-            className="px-3 py-2 text-[10px] uppercase tracking-[0.2em] font-mono font-bold border-r border-paper/15 last:border-r-0 whitespace-nowrap"
-          >
-            {h}
-          </div>
-        ))}
-      </div>
-      {/* Data rows */}
-      <div className="divide-y divide-ink/15">
+    <table className="w-full font-serif text-[14px] sm:text-[15px] mb-4 border-collapse ink-text">
+      <thead>
+        <tr>
+          {headers.map((h, i) => (
+            <th
+              key={i}
+              className="text-left align-bottom font-bold text-[11px] uppercase tracking-[0.18em] pb-1 px-2 first:pl-0 last:pr-0 border-b-[1.2px] border-ink/85 ink-text-bold"
+              style={{ width: i === 0 ? "auto" : undefined }}
+            >
+              {h}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
         {rows.map((row, ri) => (
-          <div
-            key={ri}
-            className={`grid items-start ${
-              ri % 2 === 1 ? "bg-paper-stain/30" : "bg-paper"
-            }`}
-            style={{ gridTemplateColumns: gridTemplate }}
-          >
+          <tr key={ri} className="border-b border-ink/20 last:border-b-0">
             {row.map((cell, ci) => (
-              <div
+              <td
                 key={ci}
-                className="px-2.5 py-1.5 font-serif text-[13px] sm:text-sm leading-tight border-r border-ink/12 last:border-r-0 break-words"
+                className="align-top py-1.5 px-2 first:pl-0 last:pr-0 leading-snug"
               >
                 {ci === 0 && cell.length <= 3 ? (
-                  <span className="font-stencil text-base text-stamp tracking-wider">
+                  <span className="font-stencil text-[18px] text-stamp tracking-wider">
                     {cell}
                   </span>
                 ) : (
                   cell
                 )}
-              </div>
+              </td>
             ))}
-          </div>
+          </tr>
         ))}
-      </div>
-    </div>
+      </tbody>
+    </table>
   );
 }
 
 
-/* Simon substitution table — 6 cells laid out 2 columns × 3 rows.
-   Each cell is one (vowel/no-vowel, strikes 0/1/2) sub-table that maps
-   each flashed colour to the press colour. Manual page rotates per
-   seed so this is the only place these cells are surfaced. */
+/* Simon substitution table — printed as a real lookup grid.
+   Rows are the flashed colour, columns are the (vowel × strikes)
+   state, and each cell is the colour to press. Aligned via <table>
+   so columns share a single width definition. */
 const SIMON_LIST: SimonColor[] = ["red", "blue", "yellow", "green"];
-const SIMON_SWATCH: Record<SimonColor, { bg: string; fg: string; label: string }> = {
-  red:    { bg: "#c0312a", fg: "#fff",   label: "RED" },
-  blue:   { bg: "#1d4ea0", fg: "#fff",   label: "BLUE" },
-  yellow: { bg: "#e6b524", fg: "#3a2a00", label: "YELLOW" },
-  green:  { bg: "#1f8c52", fg: "#fff",   label: "GREEN" },
+const SIMON_INK: Record<SimonColor, string> = {
+  red:    "#a8201a",
+  blue:   "#1d3f8e",
+  yellow: "#a17418",
+  green:  "#176f3f",
+};
+const SIMON_LABEL: Record<SimonColor, string> = {
+  red: "RED", blue: "BLUE", yellow: "YELLOW", green: "GREEN",
 };
 
-function SimonSwatch({ color }: { color: SimonColor }) {
-  const s = SIMON_SWATCH[color];
+/* Colour-named text — the colour itself becomes the typographic cue
+   instead of using a paint-chip swatch (which read as plastic, not
+   ink). A small filled square sits in front to reinforce the colour. */
+function SimonColorText({
+  color,
+  bold = false,
+}: {
+  color: SimonColor;
+  bold?: boolean;
+}) {
   return (
     <span
-      className="inline-flex items-center justify-center px-2 py-0.5 font-mono font-bold text-[11px] tracking-[0.18em] rounded-sm border border-ink/40"
-      style={{ background: s.bg, color: s.fg }}
+      className="inline-flex items-center gap-1 whitespace-nowrap"
+      style={{ color: SIMON_INK[color] }}
     >
-      {s.label}
+      <span
+        aria-hidden
+        className="inline-block w-2 h-2"
+        style={{
+          background: SIMON_INK[color],
+          boxShadow: "0 0 0 0.6px rgba(60,40,15,0.55)",
+        }}
+      />
+      <span
+        className={`font-serif tracking-wide ${bold ? "font-bold" : ""}`}
+        style={{
+          textShadow:
+            "0 0 0.3px rgba(60,40,15,0.45), 0 0.4px 0 rgba(40,25,10,0.25)",
+        }}
+      >
+        {SIMON_LABEL[color]}
+      </span>
     </span>
   );
 }
@@ -334,68 +338,86 @@ function SimonTableBlock({
   tables: Array<Record<SimonColor, SimonColor>>;
 }) {
   /* tables[i] where i = strikes * 2 + (vowel ? 1 : 0). */
-  const ROWS = [
-    { strikes: 0, label: "0 STRIKES" },
-    { strikes: 1, label: "1 STRIKE" },
-    { strikes: 2, label: "2+ STRIKES" },
-  ];
-  const COLS: Array<{ vowel: boolean; label: string }> = [
-    { vowel: false, label: "No vowel in serial" },
-    { vowel: true, label: "Vowel in serial" },
+  const COLS: Array<{ vowel: boolean; strikes: number; head1: string; head2: string }> = [
+    { vowel: false, strikes: 0, head1: "No vowel",   head2: "0 strikes" },
+    { vowel: false, strikes: 1, head1: "No vowel",   head2: "1 strike"  },
+    { vowel: false, strikes: 2, head1: "No vowel",   head2: "2+ strikes"},
+    { vowel: true,  strikes: 0, head1: "Vowel",      head2: "0 strikes" },
+    { vowel: true,  strikes: 1, head1: "Vowel",      head2: "1 strike"  },
+    { vowel: true,  strikes: 2, head1: "Vowel",      head2: "2+ strikes"},
   ];
   return (
-    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
-      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
-        <span>Simon · Substitution</span>
-        <span>Flash → Press</span>
+    <div className="mb-5">
+      <div className="flex items-baseline justify-between mb-1">
+        <span className="font-serif italic text-[12px] tracking-wide text-ink/75">
+          If the bomb flashes the colour at left, press the colour shown
+          under your serial / strikes column.
+        </span>
       </div>
-
-      <div className="grid" style={{ gridTemplateColumns: "auto 1fr 1fr" }}>
-        {/* header row */}
-        <div className="bg-ink/85 text-paper px-2 py-1.5 text-[10px] font-mono uppercase tracking-[0.2em] border-b border-paper/15" />
-        {COLS.map((c) => (
-          <div
-            key={c.label}
-            className="bg-ink/85 text-paper px-2 py-1.5 text-[10px] font-mono uppercase tracking-[0.2em] border-b border-paper/15 border-l border-paper/15"
-          >
-            {c.label}
-          </div>
-        ))}
-
-        {ROWS.map((row, ri) =>
-          [null, ...COLS].map((col, ci) => {
-            const stripe = ri % 2 === 1 ? "bg-paper-stain/30" : "bg-paper";
-            if (col === null) {
-              return (
-                <div
-                  key={`${ri}-l`}
-                  className={`${stripe} px-2 py-2 text-[10px] font-mono uppercase tracking-[0.2em] text-ink/70 border-t border-ink/15 self-center whitespace-nowrap`}
-                >
-                  {row.label}
-                </div>
-              );
-            }
-            const idx = row.strikes * 2 + (col.vowel ? 1 : 0);
-            const cell = tables[idx];
-            return (
-              <div
-                key={`${ri}-${ci}`}
-                className={`${stripe} px-2 py-1.5 border-t border-ink/15 border-l border-ink/15`}
+      <table className="w-full border-collapse font-serif text-[13px] sm:text-[14px] ink-text">
+        <thead>
+          <tr>
+            <th
+              rowSpan={2}
+              className="text-left align-bottom font-bold text-[10px] uppercase tracking-[0.18em] pb-1 pr-2 border-b-[1.2px] border-ink/85 ink-text-bold whitespace-nowrap"
+            >
+              Flash
+            </th>
+            {COLS.map((c, i) => (
+              <th
+                key={i}
+                className="text-center align-bottom font-bold text-[10px] uppercase tracking-[0.18em] px-1.5 pb-0.5 ink-text-bold"
+                style={{
+                  borderLeft: i === 3 ? "1.2px solid rgba(10,20,41,0.85)" : undefined,
+                }}
               >
-                <div className="grid grid-cols-[auto_auto_auto] gap-x-1 gap-y-0.5 items-center justify-start">
-                  {SIMON_LIST.map((flash) => (
-                    <div key={flash} className="contents">
-                      <SimonSwatch color={flash} />
-                      <span className="font-mono text-ink/60 text-xs px-1">→</span>
-                      <SimonSwatch color={cell[flash]} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+                {c.head1}
+              </th>
+            ))}
+          </tr>
+          <tr>
+            {COLS.map((c, i) => (
+              <th
+                key={i}
+                className="text-center align-bottom font-mono font-medium text-[10px] tracking-[0.12em] px-1.5 pb-1 border-b-[1.2px] border-ink/85 text-ink/80"
+                style={{
+                  borderLeft: i === 3 ? "1.2px solid rgba(10,20,41,0.85)" : undefined,
+                }}
+              >
+                {c.head2}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {SIMON_LIST.map((flash) => (
+            <tr
+              key={flash}
+              className="border-b border-ink/20 last:border-b-0"
+            >
+              <td className="align-middle pr-2 py-1.5">
+                <SimonColorText color={flash} bold />
+              </td>
+              {COLS.map((c, i) => {
+                const idx = c.strikes * 2 + (c.vowel ? 1 : 0);
+                const press = tables[idx][flash];
+                return (
+                  <td
+                    key={i}
+                    className="align-middle text-center px-1.5 py-1.5"
+                    style={{
+                      borderLeft:
+                        i === 3 ? "1.2px solid rgba(10,20,41,0.85)" : undefined,
+                    }}
+                  >
+                    <SimonColorText color={press} />
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -489,104 +511,75 @@ function MazeOne({ maze }: { maze: MazeData }) {
 
 function MazeGridBlock({ pool }: { pool: MazeData[] }) {
   return (
-    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
-      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
-        <span>Maze Pool</span>
-        <span>Match green markers</span>
-      </div>
-      <div className="grid grid-cols-3 gap-2 p-2">
+    <figure className="mb-5">
+      <div className="grid grid-cols-3 gap-x-4 gap-y-3">
         {pool.map((maze, i) => (
-          <div
-            key={i}
-            className={`border border-ink/25 p-1.5 ${
-              i % 2 === 1 ? "bg-paper-stain/30" : "bg-paper"
-            }`}
-          >
-            <div className="text-[8px] font-mono uppercase tracking-[0.25em] text-ink/55 mb-1 px-1">
-              §{i + 1}
-            </div>
+          <div key={i} className="flex flex-col items-center">
             <MazeOne maze={maze} />
+            <figcaption className="mt-1 font-serif italic text-[11px] text-ink/65">
+              fig. {i + 1}
+            </figcaption>
           </div>
         ))}
       </div>
-    </div>
+    </figure>
   );
 }
 
 function MemoryStagesBlock({ stages }: { stages: MemoryStageConfig[] }) {
   return (
-    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
-      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
-        <span>Memory · Stages</span>
-        <span>Apply rule, remember press</span>
-      </div>
-      <div className="divide-y divide-ink/15">
-        {stages.map((stage, i) => (
-          <div
-            key={i}
-            className={`px-3 py-2 ${
-              i % 2 === 1 ? "bg-paper-stain/30" : "bg-paper"
-            }`}
-          >
-            <div className="flex items-baseline gap-3 mb-1">
-              <span className="font-stencil text-stamp text-base tracking-[0.18em]">
-                STAGE {i + 1}
-              </span>
-              <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-ink/55">
-                Display: <span className="font-bold text-ink">{stage.display}</span>
-              </span>
-            </div>
-            <p className="font-serif text-[14px] sm:text-[15px] leading-relaxed text-ink/85">
-              {memoryRuleText(stage.rule)}.
-            </p>
-          </div>
-        ))}
-      </div>
+    <div className="mb-5">
+      {stages.map((stage, i) => (
+        <p
+          key={i}
+          className="font-serif text-[14px] sm:text-[15px] leading-relaxed mb-2 text-ink/90 pl-12 -indent-12"
+        >
+          <span className="font-stencil text-stamp text-base tracking-[0.15em] mr-2">
+            Stage {i + 1}.
+          </span>
+          <span className="italic text-ink/65">Display shows</span>{" "}
+          <span className="font-bold ink-text-bold">{stage.display}</span>
+          {" — "}
+          {memoryRuleText(stage.rule)}.
+        </p>
+      ))}
     </div>
   );
 }
 
-/* Morse table — for each word in the pool show its morse encoding and
-   the frequency to transmit on. Pool is pre-sorted alphabetically. */
+/* Morse pool — laid out as a two-column printed list. Each entry is
+   one paragraph: bold serif word, the Morse encoding in monospace,
+   leader dots, then the frequency in bold. No grid lines, no card. */
 function MorseTableBlock({ pool }: { pool: MorseEntry[] }) {
   return (
-    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
-      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
-        <span>Morse · Word ↔ Frequency</span>
-        <span>MHz</span>
-      </div>
-      <div className="grid grid-cols-[auto_1fr_auto] divide-y divide-ink/15">
-        {pool.map((entry, i) => {
-          const stripe = i % 2 === 1 ? "bg-paper-stain/30" : "bg-paper";
-          const morse = encodeMorse(entry.word).join("  ");
-          return (
-            <div key={i} className="contents">
-              <div
-                className={`${stripe} px-3 py-1.5 font-stencil text-lg tracking-[0.15em] text-ink border-t border-ink/15`}
-              >
-                {entry.word}
-              </div>
-              <div
-                className={`${stripe} px-3 py-1.5 font-mono text-xs leading-tight text-ink/75 border-t border-ink/15 self-center break-all`}
-              >
-                {morse}
-              </div>
-              <div
-                className={`${stripe} px-3 py-1.5 font-mono font-bold text-ink border-t border-ink/15 self-center whitespace-nowrap`}
-              >
+    <div className="mb-5 columns-1 sm:columns-2 gap-x-6">
+      {pool.map((entry) => {
+        const morse = encodeMorse(entry.word).join("  ");
+        return (
+          <div
+            key={entry.word}
+            className="font-serif text-[13px] leading-snug mb-2 break-inside-avoid"
+          >
+            <div className="font-bold ink-text-bold tracking-wide flex items-baseline gap-2">
+              <span>{entry.word}</span>
+              <span className="ink-leader" aria-hidden />
+              <span className="font-mono font-bold text-ink/90">
                 {MORSE_FREQS[entry.freqIndex].toFixed(3)}
-              </div>
+              </span>
             </div>
-          );
-        })}
-      </div>
+            <div className="font-mono text-[11px] text-ink/65 tracking-tight pl-1">
+              {morse}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-/* Password manual: shows the 5 letter pools at the top and the full
-   dictionary below as a flowing word-grid. The Expert spots which
-   words can be assembled from the available letters. */
+/* Password — letter pools rendered as a typeset header (column number
+   in italic above each stack of letters), and the dictionary as a
+   flowing column of small-caps words like a glossary index. */
 function PasswordDictBlock({
   words,
   columns,
@@ -595,40 +588,48 @@ function PasswordDictBlock({
   columns: string[][];
 }) {
   return (
-    <div className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full">
-      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
-        <span>Password · Letter Pools</span>
-      </div>
-      <div className="grid grid-cols-5 gap-px bg-ink/15 border-b border-ink/15">
-        {columns.map((col, i) => (
-          <div key={i} className="bg-paper px-2 py-2">
-            <div className="text-[9px] font-mono uppercase tracking-[0.3em] text-ink/55 mb-1 text-center">
-              Col {i + 1}
-            </div>
-            <div className="flex flex-col items-center gap-0.5">
-              {col.map((ch, j) => (
-                <div
-                  key={`${i}-${j}`}
-                  className="font-stencil text-lg leading-tight text-ink"
+    <div className="mb-5">
+      {/* Letter pools — 5 columns of letters, each headed with a roman
+         numeral. Aligned via a real <table> so the columns stay even. */}
+      <table className="mb-4 mx-auto border-collapse font-serif">
+        <thead>
+          <tr>
+            {columns.map((_, i) => (
+              <th
+                key={i}
+                className="px-3 sm:px-5 pb-1 font-serif italic text-[11px] text-ink/55 align-bottom border-b-[1.2px] border-ink/80"
+              >
+                col. {["I", "II", "III", "IV", "V"][i]}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: 6 }).map((_, row) => (
+            <tr key={row}>
+              {columns.map((col, ci) => (
+                <td
+                  key={ci}
+                  className="px-3 sm:px-5 py-0.5 text-center font-stencil text-[20px] leading-tight ink-text-bold"
                 >
-                  {ch}
-                </div>
+                  {col[row]}
+                </td>
               ))}
-            </div>
-          </div>
-        ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="ink-divider">❦</div>
+
+      <div className="font-serif italic text-[12px] text-ink/65 mb-2">
+        Dictionary — only words spellable from the pools above are valid.
       </div>
-      <div className="px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
-        Dictionary
-      </div>
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-x-3 gap-y-1 p-3 bg-paper">
+      <div className="columns-3 sm:columns-4 gap-x-4 font-serif text-[13px] tracking-wide ink-text">
         {words.map((w) => (
-          <span
-            key={w}
-            className="font-mono text-[12px] tracking-[0.1em] text-ink/85"
-          >
+          <div key={w} className="leading-relaxed">
             {w}
-          </span>
+          </div>
         ))}
       </div>
     </div>
@@ -655,33 +656,40 @@ function GlyphSvg({ paths }: { paths: string[] }) {
 
 function ManualPageView({ page, index, total }: { page: ManualPage; index: number; total: number }) {
   return (
+    /* Page is printed text on continuous paper — no inverted bars, no
+     boxes around content. Title is a serif display headline with a
+     thin ink rule beneath, and a small rubber-stamp seal sits to the
+     right like an over-printed classification mark. */
     <article className="max-w-3xl reveal">
-      {/* Page header */}
-      <div className="flex items-end justify-between mb-1">
-        <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-ink/50">
-          Section §{index + 1}
-        </div>
-        <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-ink/40">
-          Page {index + 1} of {total}
-        </div>
+      <div className="flex items-start justify-between gap-4 mt-1">
+        <h1 className="font-serif text-2xl sm:text-4xl font-bold tracking-tight mb-1 ink-text-bold flex-1">
+          {page.title}
+        </h1>
+        <span
+          className="ink-seal flex-none"
+          aria-label="Classified · Sector 7"
+          title="Classified · Sector 7"
+        >
+          CLASSIFIED · SEC 7
+        </span>
       </div>
-
-      <h1 className="font-serif text-2xl sm:text-4xl font-bold tracking-tight mt-1 mb-4 sm:mb-5 pb-3 border-b-2 border-ink">
-        {page.title}
-      </h1>
+      <div className="ink-divider">❦</div>
 
       {page.sections.map((section, si) => (
         <section key={si} className="mb-6 sm:mb-7">
-          <h2 className="font-serif text-base sm:text-lg font-bold mb-3 text-ink">
+          <h2 className="font-serif text-base sm:text-lg font-bold mb-3 ink-text-bold tracking-tight">
             {section.heading}
           </h2>
 
           {section.content.map((block, bi) => {
             if (block.type === "paragraph") {
+              const isFirst = si === 0 && bi === 0;
               return (
                 <p
                   key={bi}
-                  className="font-serif text-[14px] sm:text-[15px] leading-relaxed mb-3 text-ink/85"
+                  className={`font-serif text-[14px] sm:text-[15px] leading-relaxed mb-3 text-ink/85 ${
+                    isFirst ? "manual-dropcap" : ""
+                  }`}
                 >
                   {block.text}
                 </p>
@@ -699,28 +707,24 @@ function ManualPageView({ page, index, total }: { page: ManualPage; index: numbe
             }
 
             if (block.type === "rule") {
+              /* Numbered rule, printed as a paragraph entry. The marker
+                 number is the rule's index within this section. */
+              const ruleNum = section.content
+                .slice(0, bi + 1)
+                .filter((b) => b.type === "rule").length;
               return (
-                <div
+                <p
                   key={bi}
-                  className="mb-2 p-3 border-l-4 border-stamp/60 bg-paper-stain/30"
+                  className="font-serif text-[14px] sm:text-[15px] leading-relaxed mb-2 text-ink/90 pl-7 -indent-7"
                 >
-                  <div className="flex gap-2 items-start mb-1.5">
-                    <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-ink/55 mt-0.5 shrink-0">
-                      IF
-                    </span>
-                    <span className="text-sm flex-1 font-serif">
-                      {block.condition}
-                    </span>
-                  </div>
-                  <div className="flex gap-2 items-start">
-                    <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-ink/55 mt-0.5 shrink-0">
-                      THEN
-                    </span>
-                    <span className="text-sm font-bold flex-1 font-serif">
-                      {block.action}
-                    </span>
-                  </div>
-                </div>
+                  <span className="font-stencil text-stamp text-base mr-1.5 tracking-wider">
+                    {ruleNum}.
+                  </span>
+                  <span className="italic">If</span> {block.condition}
+                  {", "}
+                  <span className="italic">then</span>{" "}
+                  <span className="font-bold ink-text-bold">{block.action}</span>.
+                </p>
               );
             }
 
@@ -752,31 +756,20 @@ function ManualPageView({ page, index, total }: { page: ManualPage; index: numbe
 
             if (block.type === 'symbolColumns') {
               return (
-                <div
-                  key={bi}
-                  className="border-2 border-ink/40 manual-card bg-paper overflow-hidden mb-3 w-full"
-                >
-                  {/* Header band */}
-                  <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-ink text-paper text-[10px] font-mono uppercase tracking-[0.3em]">
-                    <span>Symbol Reference</span>
-                    <span className="flex items-center gap-1.5">
-                      Press Order
-                      <span className="font-stencil text-base leading-none">↓</span>
-                    </span>
+                <figure key={bi} className="mb-5">
+                  <div className="flex items-baseline justify-between text-[11px] font-serif italic text-ink/65 mb-1">
+                    <span>Symbol columns — press order is top → bottom.</span>
                   </div>
-
-                  {/* Columns share the full available width and the glyphs
-                     scale with their column so everything fits at any size. */}
+                  <hr className="ink-rule-hair mb-2" />
                   <div className="flex w-full">
                     {block.columns.map((col, ci) => (
                       <div
                         key={ci}
-                        className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 px-0.5 py-2 ${
-                          ci < block.columns.length - 1
-                            ? "border-r border-ink/15"
-                            : ""
-                        } ${ci % 2 === 1 ? "bg-paper-stain/25" : ""}`}
+                        className="flex-1 min-w-0 flex flex-col items-center gap-0.5 px-1 py-1"
                       >
+                        <div className="font-serif italic text-[10px] text-ink/55 mb-0.5">
+                          col. {["I", "II", "III", "IV", "V", "VI", "VII", "VIII"][ci]}
+                        </div>
                         {col.map((sym) => (
                           <div
                             key={sym.id}
@@ -788,7 +781,8 @@ function ManualPageView({ page, index, total }: { page: ManualPage; index: numbe
                       </div>
                     ))}
                   </div>
-                </div>
+                  <hr className="ink-rule-hair mt-2" />
+                </figure>
               );
             }
 
@@ -797,13 +791,17 @@ function ManualPageView({ page, index, total }: { page: ManualPage; index: numbe
         </section>
       ))}
 
-      {/* Footer stamp */}
-      <div className="mt-8 sm:mt-10 flex items-end justify-between">
-        <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-ink/40">
-          Acme Defusal Division · M-7
+      {/* Page foot — a printed folio in the centre, like a book.
+         The leaf decoration on the sides is a small print mark, not a
+         banner. The Acme imprint sits below the folio in italic. */}
+      <div className="mt-10 sm:mt-12 flex flex-col items-center gap-1 text-ink/55 font-serif">
+        <div className="flex items-center gap-3 text-[13px]">
+          <span className="text-ink/35">❦</span>
+          <span className="font-bold ink-text-bold">— {index + 1} —</span>
+          <span className="text-ink/35">❦</span>
         </div>
-        <div className="stamp text-stamp text-[10px] stamp-sm">
-          AUTHORIZED
+        <div className="italic text-[11px] text-ink/50">
+          Acme Defusal Division · M-7
         </div>
       </div>
     </article>

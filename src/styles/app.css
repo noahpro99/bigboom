@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400;700;900&family=Big+Shoulders+Display:wght@700;900&family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400;700;900&family=Big+Shoulders+Display:wght@700;900&family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&family=Special+Elite&family=Cutive+Mono&display=swap");
 
 @import "tailwindcss";
 
@@ -35,6 +35,11 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --font-pmono: "IBM Plex Mono", ui-monospace, monospace;
   --font-serif: "IBM Plex Serif", Georgia, serif;
+  /* Old typewriter — distressed, uneven impressions. Used for the
+     manual body so the page reads as a typewritten/mimeographed field
+     manual instead of a modern e-book. */
+  --font-typewriter: "Special Elite", "Cutive Mono", "Courier New", monospace;
+  --font-typewriter-clean: "Cutive Mono", "Courier New", monospace;
 }
 
 html, body {
@@ -209,95 +214,177 @@ button:disabled,
     );
 }
 
-/* ----- Paper page-stack —
-   The visible block of pages under the active sheet. Two thin slivers at
-   the left and right of the page reveal the edge of the page block. During
-   a page flip the active sheet slides over these, exposing more of the
-   underlying stack momentarily.
+/* ----- Paper sheet —
+   The manual is a single elevated sheet sitting on the dark chassis;
+   the box-shadow handles the elevation. (Earlier versions drew visible
+   stack-edge slivers at left/right; they fought the scrollbar and
+   added visual noise, so they're gone.) */
+.paper-stack { position: relative; }
+/* The .is-flipping class is still set during a page transition for
+   future hooks, but no longer drives any side-sliver animation. */
 
-   The wrapper provides the slivers; the active sheet sits on top. */
-.paper-stack {
-  position: relative;
-}
-/* The visible cut edge of the page stack — yellowed, with thin
-   alternating bands so each page in the block reads as its own sheet. */
-.paper-stack::before,
-.paper-stack::after {
-  content: "";
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  width: 8px;
-  pointer-events: none;
-  background:
-    repeating-linear-gradient(180deg,
-      var(--color-paper-stain) 0,
-      var(--color-paper-stain) 2px,
-      var(--color-paper-dim) 2px,
-      var(--color-paper-dim) 4px,
-      var(--color-paper) 4px,
-      var(--color-paper) 6px),
-    linear-gradient(180deg,
-      rgba(140, 100, 50, 0.18) 0%,
-      rgba(140, 100, 50, 0.05) 35%,
-      rgba(80, 50, 20, 0.18) 100%);
-  background-blend-mode: multiply;
-  box-shadow:
-    inset 0 1px 0 rgba(0,0,0,0.08),
-    inset 0 -1px 0 rgba(0,0,0,0.1);
-  z-index: 2;
-}
-.paper-stack::before {
-  left: 0;
-  border-right: 1px solid rgba(80, 50, 20, 0.25);
-  box-shadow:
-    inset 0 0 6px rgba(80, 50, 20, 0.18),
-    1px 0 0 rgba(0, 0, 0, 0.08);
-}
-.paper-stack::after {
-  right: 0;
-  border-left: 1px solid rgba(80, 50, 20, 0.25);
-  box-shadow:
-    inset 0 0 6px rgba(80, 50, 20, 0.18),
-    -1px 0 0 rgba(0, 0, 0, 0.08);
-}
-
-/* When the wrapper is "flipping" (a page mid-transition), pull the stack
-   edges slightly inward and deepen the shadow — visually mimics the page
-   curling/lifting away to reveal the next sheet. */
-.paper-stack.is-flipping::before {
-  animation: stack-edge-pulse-l 0.32s cubic-bezier(0.4, 0, 0.6, 1) both;
-}
-.paper-stack.is-flipping::after {
-  animation: stack-edge-pulse-r 0.32s cubic-bezier(0.4, 0, 0.6, 1) both;
-}
-@keyframes stack-edge-pulse-l {
-  from { width: 8px; opacity: 1; }
-  to   { width: 14px; opacity: 1; }
-}
-@keyframes stack-edge-pulse-r {
-  from { width: 8px; opacity: 1; }
-  to   { width: 14px; opacity: 1; }
-}
-
-/* The active sheet — sits above the stack edges and casts a paper-feel
-   shadow so it visibly lifts off the block. */
 .paper-sheet {
   position: relative;
-  z-index: 3;
+  z-index: 1;
+  /* Asymmetric shadow — heavier bottom-right like a real sheet lit
+     from above. The top/left highlight is a brighter 1px rim, the
+     bottom/right uses progressively softer shadows for depth. */
   box-shadow:
-    0 0 0 1px rgba(80, 50, 20, 0.08),
-    0 1px 2px rgba(80, 50, 20, 0.12),
-    0 6px 14px rgba(80, 50, 20, 0.18);
+    0 0 0 1px rgba(80, 50, 20, 0.12),
+    0 -1px 0 rgba(255, 245, 220, 0.35),
+    1px 2px 4px rgba(50, 30, 10, 0.22),
+    3px 6px 14px rgba(50, 30, 10, 0.28),
+    6px 12px 26px rgba(50, 30, 10, 0.18);
+}
+
+/* ----- Ink on paper —
+   For body content. The trick is to soften the stroke ever so slightly
+   so text reads as absorbed into fibres rather than rendered on top.
+   Implemented as a tiny brown text-shadow that bleeds the same colour
+   half a pixel in every direction. */
+.ink-text {
+  color: var(--color-ink);
+  text-shadow:
+    0 0 0.3px rgba(60, 40, 15, 0.55),
+    0 0.4px 0 rgba(40, 25, 10, 0.3);
+}
+.ink-text-bold {
+  color: var(--color-ink);
+  font-weight: 700;
+  text-shadow:
+    0 0 0.4px rgba(60, 40, 15, 0.55),
+    0 0.5px 0 rgba(40, 25, 10, 0.32);
+}
+
+/* A short underline used as a section/header divider — thicker, slightly
+   irregular thanks to the soft gradient edges. */
+.ink-rule {
+  border: 0;
+  border-top: 1.2px solid var(--color-ink);
+  opacity: 0.85;
+  margin: 0;
+}
+.ink-rule-hair {
+  border: 0;
+  border-top: 1px solid var(--color-ink);
+  opacity: 0.25;
+  margin: 0;
+}
+
+/* Inside the manual sheet, body text becomes the typewriter face so the
+   whole page reads as a typewritten/mimeographed field manual. We
+   override .font-serif (used liberally for body content) to point at
+   the typewriter, but the page title h1 keeps the real serif so it
+   stands out as set type. Captions/labels in italic also keep serif
+   for contrast against the typewritten body. */
+.manual-paper {
+  font-family: var(--font-typewriter);
+}
+.manual-paper .font-serif {
+  font-family: var(--font-typewriter);
+}
+.manual-paper h1.font-serif,
+.manual-paper .font-serif-display {
+  font-family: var(--font-serif);
+}
+
+/* Decorative section divider — three-figure printer's mark. Used between
+   the page title and body where a plain rule feels too plain. */
+.ink-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  color: var(--color-ink);
+  opacity: 0.55;
+  font-family: var(--font-serif);
+  margin: 0.4rem 0 1rem 0;
+}
+.ink-divider::before,
+.ink-divider::after {
+  content: "";
+  flex: 1 1 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(10, 20, 41, 0.4) 30%,
+    rgba(10, 20, 41, 0.4) 70%,
+    transparent
+  );
+}
+
+/* Drop-cap on the first paragraph of a section — large serif initial
+   that sits inside the text block, flush with two lines of body. */
+.manual-dropcap::first-letter {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 3.4em;
+  line-height: 0.85;
+  float: left;
+  padding: 0.05em 0.12em 0 0;
+  color: var(--color-ink);
+  text-shadow:
+    0 0 0.4px rgba(60, 40, 15, 0.55),
+    0 0.6px 0 rgba(40, 25, 10, 0.32);
+}
+
+/* Dotted leader — the run of evenly-spaced dots between a list label
+   and a right-aligned value (table-of-contents style). Used in the
+   morse pool to connect a word to its frequency. */
+.ink-leader {
+  flex: 1 1 0;
+  align-self: flex-end;
+  height: 0.7em;
+  margin: 0 0.3rem;
+  background-image: radial-gradient(
+    circle,
+    var(--color-ink) 0.6px,
+    transparent 0.9px
+  );
+  background-size: 5px 5px;
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+  opacity: 0.45;
+}
+
+/* Stamp seal — small rotated round-ish stamp in the page corner. Used
+   to add classified/document-feel to the page header. */
+.ink-seal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-stencil);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--color-stamp);
+  border: 1.6px solid currentColor;
+  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  text-align: center;
+  line-height: 1.05;
+  padding: 4px;
+  transform: rotate(-8deg);
+  opacity: 0.78;
+  /* Inky stamp impression — uneven pressure across the rubber face. */
+  box-shadow:
+    inset 0 0 0 0.6px rgba(168, 49, 42, 0.4),
+    inset 0 0 6px rgba(168, 49, 42, 0.15);
+  background:
+    radial-gradient(ellipse at 30% 30%, rgba(168, 49, 42, 0.08) 0%, transparent 60%);
 }
 
 /* ----- Display helpers ----- */
 
-.font-stencil { font-family: var(--font-stencil); }
-.font-display { font-family: var(--font-display); }
-.font-mono    { font-family: var(--font-mono); }
-.font-pmono   { font-family: var(--font-pmono); }
-.font-serif   { font-family: var(--font-serif); }
+.font-stencil    { font-family: var(--font-stencil); }
+.font-display    { font-family: var(--font-display); }
+.font-mono       { font-family: var(--font-mono); }
+.font-pmono      { font-family: var(--font-pmono); }
+.font-serif      { font-family: var(--font-serif); }
+.font-typewriter { font-family: var(--font-typewriter); }
+.font-typewriter-clean { font-family: var(--font-typewriter-clean); }
 
 .led-timer {
   font-family: var(--font-mono);
@@ -771,27 +858,39 @@ button:disabled,
   background: transparent;
 }
 
-/* Paper/ink scrollbar — used inside the manual */
+/* Paper/ink scrollbar — sits inside the manual sheet. Track is the
+   yellowed paper, thumb is an ink-tone bar with subtle paper highlights.
+   Sized 8px so it doesn't overpower the sheet. */
 .scrollbar-ink {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-ink-mid) transparent;
+  scrollbar-color: rgba(40, 25, 10, 0.55) var(--color-paper-stain);
 }
 .scrollbar-ink::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 .scrollbar-ink::-webkit-scrollbar-track {
-  background: rgba(14, 31, 58, 0.05);
-  border-radius: 0;
+  background: var(--color-paper-stain);
+  box-shadow: inset 1px 0 0 rgba(40, 25, 10, 0.12);
 }
 .scrollbar-ink::-webkit-scrollbar-thumb {
-  background: var(--color-ink-mid);
-  border: 1px solid var(--color-ink);
+  background: linear-gradient(
+    180deg,
+    rgba(40, 25, 10, 0.6),
+    rgba(40, 25, 10, 0.7)
+  );
   border-radius: 0;
+  box-shadow:
+    inset 1px 0 0 rgba(255, 245, 220, 0.25),
+    inset -1px 0 0 rgba(0, 0, 0, 0.35);
 }
 .scrollbar-ink::-webkit-scrollbar-thumb:hover {
-  background: var(--color-ink);
+  background: linear-gradient(
+    180deg,
+    rgba(40, 25, 10, 0.78),
+    rgba(40, 25, 10, 0.88)
+  );
 }
 .scrollbar-ink::-webkit-scrollbar-corner {
-  background: transparent;
+  background: var(--color-paper-stain);
 }

@@ -597,17 +597,11 @@ export function generateManualPages(seed: number): ManualPage[] {
     sections: [
       {
         heading: "Rules — apply the first one that matches",
-        content: [
-          {
-            type: "table",
-            headers: ["#", "Condition", "Cut"],
-            rows: wireConfig.rules.map((r, i) => [
-              String(i + 1),
-              r.conditionText,
-              r.cutText,
-            ]),
-          },
-        ],
+        content: wireConfig.rules.map((r) => ({
+          type: "rule" as const,
+          condition: r.conditionText,
+          action: `cut ${r.cutText}`,
+        })),
       },
     ],
   };
