@@ -811,7 +811,27 @@ export function generateManualPages(
     ? Array.from(new Set(moduleTypes))
     : (Object.keys(byType) as ModuleType[]);
   const all: ManualPage[] = present.map((t) => byType[t]);
-  return [...all].sort(() => orderRng() - 0.5);
+  /* Module pages get a tag so the renderer can distinguish them from
+     cover/toc front matter. */
+  for (const p of all) p.kind = "module";
+
+  const modulePages = [...all].sort(() => orderRng() - 0.5);
+
+  /* Front matter — book cover then a table of contents. These come
+     first regardless of seed; their content is largely static but the
+     small bibliographic codes draw from the seed for flavour. */
+  const coverPage: ManualPage = {
+    kind: "cover",
+    title: "BOMB DEFUSAL",
+    sections: [],
+  };
+  const tocPage: ManualPage = {
+    kind: "toc",
+    title: "Table of Contents",
+    sections: [],
+  };
+
+  return [coverPage, tocPage, ...modulePages];
 }
 
 // ---- Symbol generation ----

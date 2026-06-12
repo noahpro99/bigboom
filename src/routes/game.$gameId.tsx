@@ -17,7 +17,13 @@ import { ManualView } from "../components/manual/ManualView";
 import { ProfileButton } from "../components/ProfileButton";
 import { SoundLayer } from "../components/SoundLayer";
 import { getSessionId } from "../lib/session";
-import { play, preloadAll, playMusic, stopMusic } from "../lib/sound";
+import {
+  play,
+  preloadAll,
+  playMusic,
+  stopMusic,
+  setInGame,
+} from "../lib/sound";
 import type {
   ModuleType,
   PlayerRole,
@@ -141,15 +147,20 @@ function GamePage() {
     preloadAll();
   }, []);
 
-  // Music carries through the whole experience. We just duck the volume
-  // hard while the bomb is armed so the ticks and chatter sit on top, and
-  // bring it back up for the lobby + game-over overlay.
+  // Music carries through the whole experience. While the bomb is armed
+  // we flip the music bus to "musicInGame" via setInGame — its slider
+  // defaults lower so the soundtrack sits well under SFX/timer beeps —
+  // and flip back for lobby + game-over.
   useEffect(() => {
     const status = gameState?.game.status;
-    if (status === "active") playMusic("menuMusic", 0.02);
-    else if (status === "waiting" || status === "won" || status === "lost") {
-      playMusic("menuMusic", 0.12);
-    }
+    if (!status) return;
+    setInGame(status === "active");
+    playMusic("menuMusic");
+    return () => {
+      /* Make sure we don't leave the in-game bus stuck on when this
+         component unmounts (navigating away from the game). */
+      setInGame(false);
+    };
   }, [gameState?.game.status]);
 
   useEffect(() => {

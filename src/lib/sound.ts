@@ -18,8 +18,12 @@ export type MusicKey = "menuMusic";
 /* Every sound belongs to exactly one mix bus. The Settings modal exposes
    one master slider per bus; the per-key BASE_VOLUMES below give the
    relative loudness within a bus. Effective volume at play time is
-   BASE_VOLUMES[key] * busVolume[bus]; muted overrides everything to silent. */
-export type Bus = "music" | "sfx" | "timer";
+   BASE_VOLUMES[key] * busVolume[bus]; muted overrides everything to silent.
+
+   Music has two buses — "music" for menu/lobby/game-over and "musicInGame"
+   for active gameplay — controlled by setInGame() below. The active
+   gameplay bus defaults lower so music doesn't compete with concentration. */
+export type Bus = "music" | "musicInGame" | "sfx" | "timer";
 
 const BUS: Record<SoundKey, Exclude<Bus, "music">> = {
   menuButton: "sfx",
@@ -75,12 +79,16 @@ const VOL_KEY = "bigboom-volumes";
 
 interface PersistedVolumes {
   music: number;
+  musicInGame: number;
   sfx: number;
   timer: number;
 }
 
 const DEFAULT_VOLUMES: PersistedVolumes = {
   music: 1,
+  /* Music gets ducked hard during active gameplay so it sits well below
+     SFX and timer beeps. The slider lets the host taste-test up or down. */
+  musicInGame: 0.25,
   sfx: 1,
   timer: 1,
 };
@@ -95,6 +103,10 @@ let muted = false;
    button. While true, no SFX/music plays; only the synthesized morse
    tone (which goes through a separate Web Audio path) is audible. */
 let listening = false;
+/* True while the bomb is armed (status === "active"). Switches the
+   music bus from "music" to "musicInGame" so the in-game slider takes
+   over. Game route hooks into status changes via setInGame(). */
+let inGame = false;
 
 const cache = new Map<SoundKey, Howl>();
 const musicCache = new Map<MusicKey, Howl>();
@@ -109,6 +121,9 @@ if (typeof window !== "undefined") {
       const parsed = JSON.parse(raw) as Partial<PersistedVolumes>;
       busVolumes = {
         music: clamp01(parsed.music ?? DEFAULT_VOLUMES.music),
+        musicInGame: clamp01(
+          parsed.musicInGame ?? DEFAULT_VOLUMES.musicInGame
+        ),
         sfx: clamp01(parsed.sfx ?? DEFAULT_VOLUMES.sfx),
         timer: clamp01(parsed.timer ?? DEFAULT_VOLUMES.timer),
       };
@@ -130,7 +145,8 @@ function effective(key: SoundKey): number {
 
 function effectiveMusic(key: MusicKey): number {
   if (muted) return 0;
-  return MUSIC_BASE[key] * busVolumes.music;
+  const bus: Bus = inGame ? "musicInGame" : "music";
+  return MUSIC_BASE[key] * busVolumes[bus];
 }
 
 function load(key: SoundKey): Howl {
@@ -167,8 +183,9 @@ export function play(key: SoundKey) {
 function applyMusicPlayState(key: MusicKey) {
   const h = musicCache.get(key);
   if (!h) return;
+  const activeBus: Bus = inGame ? "musicInGame" : "music";
   const wantsPlaying =
-    activeMusic.has(key) && !muted && !listening && busVolumes.music > 0;
+    activeMusic.has(key) && !muted && !listening && busVolumes[activeBus] > 0;
   if (wantsPlaying && !h.playing()) h.play();
   else if (!wantsPlaying && h.playing()) h.pause();
 }
@@ -242,6 +259,15 @@ export function setListening(on: boolean) {
   listening = on;
   /* When entering listening mode, pause whatever music's playing.
      When leaving, applyAllVolumes resumes it if appropriate. */
+  applyAllVolumes();
+  listeners.forEach((l) => l());
+}
+
+/* Toggle the music-bus selection. Called by the game route when the
+   game status transitions in/out of "active". */
+export function setInGame(on: boolean) {
+  if (inGame === on) return;
+  inGame = on;
   applyAllVolumes();
   listeners.forEach((l) => l());
 }

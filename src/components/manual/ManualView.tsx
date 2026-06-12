@@ -57,13 +57,36 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
   const selectedIdxRef = useRef(selectedIdx);
   selectedIdxRef.current = selectedIdx;
 
-  function flipTo(target: number) {
-    if (phaseRef.current.kind !== "idle") return;
-    const cur = selectedIdxRef.current;
-    if (target === cur || target < 0 || target >= pages.length) return;
-    const side: "left" | "right" = target > cur ? "left" : "right";
+  /* Pending-flip queue. queueFlipBy() just adds a signed count to the
+     net direction the reader wants to go; if the animation is already
+     mid-flip we don't drop the input. After each animation lands back
+     in idle, processNextFlip() pops one off the queue and animates the
+     next page. Net result: rapid double-swipe travels two pages, plays
+     two sounds, takes two animation lengths — but no input is lost. */
+  const pendingDeltaRef = useRef(0);
+
+  function processNextFlip() {
+    if (pendingDeltaRef.current === 0) return;
+    const dir = Math.sign(pendingDeltaRef.current);
+    const target = selectedIdxRef.current + dir;
+    if (target < 0 || target >= pages.length) {
+      /* Hit the edge of the book — collapse the queue so further
+         swipes in the same direction don't pile up. */
+      pendingDeltaRef.current = 0;
+      return;
+    }
+    pendingDeltaRef.current -= dir;
     play("pageTurn");
-    setPhase({ kind: "exit", side, targetIdx: target });
+    setPhase({
+      kind: "exit",
+      side: dir > 0 ? "left" : "right",
+      targetIdx: target,
+    });
+  }
+
+  function queueFlipBy(direction: -1 | 1) {
+    pendingDeltaRef.current += direction;
+    if (phaseRef.current.kind === "idle") processNextFlip();
   }
 
   function handleAnimationEnd() {
@@ -79,16 +102,24 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
     }
   }
 
+  /* Whenever we land in idle, drain one queued flip. Driven by the
+     phase state change so it runs after React has committed the
+     reset. */
+  useEffect(() => {
+    if (phase.kind === "idle") processNextFlip();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   // Keyboard arrows
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "ArrowRight") flipTo(selectedIdx + 1);
-      else if (e.key === "ArrowLeft") flipTo(selectedIdx - 1);
+      if (e.key === "ArrowRight") queueFlipBy(1);
+      else if (e.key === "ArrowLeft") queueFlipBy(-1);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIdx, animating]);
+  }, []);
 
   const animClass =
     phase.kind === "exit" && phase.side === "left"
@@ -116,6 +147,24 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
   function handlePointerDown(e: React.PointerEvent) {
     // Only left mouse button counts; touch and pen always do.
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    /* Ignore pointerdowns that land on an interactive control. The
+       Settings modal portals to document.body but React still bubbles
+       its synthetic events back through the component tree (the
+       ProfileButton trigger lives inside the manual header) — so a
+       drag on a settings slider would otherwise be hijacked here.
+       Buttons inside the manual itself (prev/next/profile) also pass
+       through this filter, since their onClick handlers don't depend
+       on the swipe tracker. `data-no-swipe` is an escape hatch any
+       sub-tree can use without depending on element type. */
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      target.closest(
+        "input, button, select, textarea, a, [role='button'], [role='slider'], [data-no-swipe]"
+      )
+    ) {
+      return;
+    }
     pointerRef.current = {
       x: e.clientX,
       y: e.clientY,
@@ -154,8 +203,7 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
     if (!s.captured) return;
     const dx = e.clientX - s.x;
     if (Math.abs(dx) < SWIPE_THRESHOLD) return;
-    if (dx < 0) flipTo(selectedIdxRef.current + 1);
-    else flipTo(selectedIdxRef.current - 1);
+    queueFlipBy(dx < 0 ? 1 : -1);
   }
 
   return (
@@ -169,7 +217,12 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
       }`}
     >
       <div
-        className="absolute inset-0 overflow-auto scrollbar-ink tx-paper-lines"
+        /* cursor-grab in the resting state, cursor-grabbing while a
+           mouse button is actually pressed — gives the "I can swipe
+           this" affordance without needing any visible UI. Interactive
+           children (buttons, inputs) override to their own cursor via
+           the regular CSS cascade. */
+        className="absolute inset-0 overflow-auto scrollbar-ink tx-paper-lines cursor-grab active:cursor-grabbing"
         style={{ touchAction: "pan-y" }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -181,60 +234,86 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
         <main
           key={selectedIdx}
           onAnimationEnd={handleAnimationEnd}
-          className={`min-h-full ${animClass}`}
+          className={`${
+            page.kind === "cover" ? "h-full" : "min-h-full"
+          } ${animClass}`}
         >
-          {/* Running header — printed on the page, no background change.
-             Profile/settings chip lives at the far right; even though
-             it's a real button it's styled in the same paper-ink tone
-             so it reads as a printed icon on the page. */}
-          <header className="flex items-center justify-between gap-3 px-4 sm:px-10 pt-3 pb-2 font-serif italic text-[11px] text-ink/65">
-            <span className="flex items-center gap-1.5">
-              <BookOpen size={11} strokeWidth={2} className="opacity-70" />
-              Bomb Defusal · Field Manual
-            </span>
-            <span className="hidden md:inline">
-              Issue 47 — Restricted Distribution
-            </span>
-            <span className="flex items-center gap-3">
-              <span className="hidden sm:inline">§{selectedIdx + 1} of {pages.length}</span>
-              <ProfileButton variant="light" showLabel={false} />
-            </span>
-          </header>
-          <hr className="ink-rule-hair mx-4 sm:mx-10" />
+          {page.kind === "cover" ? (
+            /* The cover is its own beast: no running header, no nav,
+               no body padding — just a full-bleed dark book-cloth
+               with the title embossed in gilt and a sliver of the
+               first paper page peeking out from the right edge. */
+            <CoverPage seed={seed} onSwipeNext={() => queueFlipBy(1)} />
+          ) : (
+            <>
+              {/* Running header — printed on the page, no background
+                 change. Profile/settings chip lives at the far right;
+                 styled in the same paper-ink tone so it reads as a
+                 printed icon. Constrained to the same measure as the
+                 body so its content sits over the printed area. */}
+              <div className="px-4 sm:px-10 pt-3">
+                <header className="max-w-3xl mx-auto flex items-center justify-between gap-3 pb-2 font-serif italic text-[11px] text-ink/65">
+                  <span className="flex items-center gap-1.5">
+                    <BookOpen size={11} strokeWidth={2} className="opacity-70" />
+                    Bomb Defusal · Field Manual
+                  </span>
+                  <span className="hidden md:inline">
+                    Issue 47 — Restricted Distribution
+                  </span>
+                  <span className="flex items-center gap-3">
+                    <span className="hidden sm:inline">§{selectedIdx + 1} of {pages.length}</span>
+                    <ProfileButton variant="light" showLabel={false} />
+                  </span>
+                </header>
+                <hr className="ink-rule-hair max-w-3xl mx-auto" />
+              </div>
 
-          <div className="py-5 sm:py-8 px-4 sm:px-10">
-            <ManualPageView
-              page={page}
-              index={selectedIdx}
-              total={pages.length}
-            />
-          </div>
+              {/* Top nav — printed tap targets right under the running
+                  header. */}
+              <div className="px-4 sm:px-10 pt-2 pb-1">
+                <nav className="max-w-3xl mx-auto">
+                  <div className="flex items-baseline justify-between font-serif italic text-[12px] text-ink/70">
+                    <button
+                      onClick={() => queueFlipBy(-1)}
+                      disabled={atFirst}
+                      aria-label="Previous page"
+                      className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors"
+                    >
+                      <ChevronLeft size={13} strokeWidth={2.2} />
+                      <span>prev</span>
+                    </button>
+                    <span className="text-ink/50 hidden sm:inline">swipe ←→</span>
+                    <button
+                      onClick={() => queueFlipBy(1)}
+                      disabled={atLast}
+                      aria-label="Next page"
+                      className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors"
+                    >
+                      <span>next</span>
+                      <ChevronRight size={13} strokeWidth={2.2} />
+                    </button>
+                  </div>
+                  <hr className="ink-rule-hair mt-2" />
+                </nav>
+              </div>
 
-          {/* Foot nav — printed tap targets. */}
-          <footer className="px-4 sm:px-10 pb-5">
-            <hr className="ink-rule-hair mb-2" />
-            <div className="flex items-baseline justify-between font-serif italic text-[12px] text-ink/70">
-              <button
-                onClick={() => flipTo(selectedIdx - 1)}
-                disabled={atFirst || animating}
-                aria-label="Previous page"
-                className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors"
-              >
-                <ChevronLeft size={13} strokeWidth={2.2} />
-                <span>prev</span>
-              </button>
-              <span className="text-ink/50 hidden sm:inline">swipe ←→</span>
-              <button
-                onClick={() => flipTo(selectedIdx + 1)}
-                disabled={atLast || animating}
-                aria-label="Next page"
-                className="flex items-center gap-1 hover:text-ink disabled:opacity-25 transition-colors"
-              >
-                <span>next</span>
-                <ChevronRight size={13} strokeWidth={2.2} />
-              </button>
-            </div>
-          </footer>
+              {/* Body — paper extends full width (so the page-flip
+                 animation slides the whole sheet), but the printed
+                 content stays centered with a comfortable measure
+                 (~max-w-3xl) so wide screens don't read like a banner. */}
+              <div className="py-4 sm:py-6 px-4 sm:px-10">
+                <div className="max-w-3xl mx-auto">
+                  <ManualPageView
+                    page={page}
+                    pages={pages}
+                    index={selectedIdx}
+                    total={pages.length}
+                    seed={seed}
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </main>
       </div>
     </div>
@@ -670,7 +749,209 @@ function GlyphSvg({ paths }: { paths: string[] }) {
   );
 }
 
-function ManualPageView({ page, index, total }: { page: ManualPage; index: number; total: number }) {
+/* Tiny deterministic-noise helpers — derive a couple of "bibliographic"
+   codes from the bomb seed so each manual cover has its own catalog
+   number / classification suffix without being random across hydration. */
+function seedAlphaCode(seed: number, length: number): string {
+  const LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let n = (seed >>> 0) ^ 0xa5a5a5a5;
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += LETTERS[n % LETTERS.length];
+    n = Math.floor(n / 23) ^ 0x5bd1e995;
+  }
+  return out;
+}
+function seedDigits(seed: number, length: number): string {
+  let n = (seed >>> 0) ^ 0x12345678;
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += String(n % 10);
+    n = Math.floor(n / 7) ^ 0xa3b1c9d7;
+  }
+  return out;
+}
+
+/* --- Cover page ---
+   Stapled field-manual booklet, same dimensions as the interior pages.
+   Manila card stock with flat-printed ink (not foil), bound by a
+   stitched seam down the left edge that carries three visible
+   staples. */
+function CoverPage({
+  seed,
+  onSwipeNext,
+}: {
+  seed: number;
+  onSwipeNext: () => void;
+}) {
+  const catalog = `${seedAlphaCode(seed, 2)}-${seedDigits(seed, 4)}`;
+  return (
+    <div
+      className="tx-cover relative h-full w-full flex select-none cursor-pointer"
+      onClick={onSwipeNext}
+    >
+      {/* Left seam — staples + crease. Same position as where the
+         interior pages would meet the binding. */}
+      <div className="booklet-seam flex-none">
+        <span className="booklet-staple" aria-hidden />
+      </div>
+
+      <div className="flex-1 flex flex-col items-center justify-between text-center px-6 py-10 sm:py-14 max-w-md mx-auto w-full">
+        {/* Tiny imprint at the top — printer's mark style */}
+        <div className="text-[9px] font-mono uppercase tracking-[0.35em] cover-ink opacity-65">
+          Acme Defusal Division — Issue 47
+        </div>
+
+        {/* Title block — main ink-stamped lettering, flat and direct */}
+        <div className="flex flex-col items-center gap-3">
+          <h1
+            className="font-stencil cover-ink text-6xl sm:text-7xl leading-[0.85] tracking-[0.03em]"
+            style={{ letterSpacing: "0.02em" }}
+          >
+            BOMB
+            <br />
+            DEFUSAL
+          </h1>
+          <div className="text-[11px] font-mono uppercase tracking-[0.35em] cover-ink opacity-80">
+            — Field Manual · M-7 —
+          </div>
+        </div>
+
+        {/* Classification rubber-stamp, rotated slightly like a real
+           inked stamp pressed onto the card */}
+        <div className="my-2">
+          <div
+            className="inline-flex flex-col items-center px-4 py-2 border-2"
+            style={{
+              borderColor: "#7c1d1a",
+              color: "#7c1d1a",
+              transform: "rotate(-3deg)",
+              fontFamily: "var(--font-stencil)",
+              letterSpacing: "0.18em",
+              opacity: 0.82,
+              boxShadow: "inset 0 0 0 1px rgba(124, 29, 26, 0.18)",
+            }}
+          >
+            <span className="text-[15px] font-bold">CLASSIFIED</span>
+            <span className="text-[9px] tracking-[0.3em] mt-0.5">
+              SECTOR · 7
+            </span>
+          </div>
+        </div>
+
+        {/* Swipe instruction */}
+        <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-[0.3em] cover-ink opacity-80 animate-cover-nudge">
+          <span>swipe to open</span>
+          <ChevronRight size={14} strokeWidth={2.5} />
+        </div>
+
+        {/* Catalog code at the bottom edge */}
+        <div className="text-[9px] font-mono uppercase tracking-[0.3em] cover-ink opacity-65">
+          No. {catalog} · Restricted Distribution
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --- Table of contents --- */
+function TableOfContentsPage({ pages }: { pages: ManualPage[] }) {
+  /* List every page except the cover itself; show the page number in
+     the manual (1-indexed). Module pages get their full printed title;
+     the TOC entry shows the title in stencil to match the front matter
+     and the page number in mono with leader dots. */
+  return (
+    <article className="reveal">
+      <div className="flex items-baseline justify-between mb-1">
+        <h1 className="font-serif text-3xl sm:text-4xl font-bold tracking-tight ink-text-bold">
+          Table of Contents
+        </h1>
+        <span className="font-mono italic text-[11px] text-ink/55">
+          Front Matter · §I
+        </span>
+      </div>
+      <hr className="ink-rule mb-5" />
+
+      <p className="font-serif italic text-[13px] text-ink/75 mb-5">
+        Sections appear in the order printed. Refer to the running header
+        for the active section number.
+      </p>
+
+      <ul className="space-y-1.5">
+        {pages.map((p, i) => {
+          if (p.kind === "cover") return null;
+          const pageNum = i + 1;
+          const isToc = p.kind === "toc";
+          return (
+            <li
+              key={i}
+              className="flex items-baseline gap-2 font-serif text-[14px] sm:text-[15px]"
+            >
+              <span className="font-stencil text-stamp text-base shrink-0">
+                {isToc ? "i" : romanLower(pageNum - 1)}.
+              </span>
+              <span className="font-stencil tracking-[0.05em] text-ink shrink-0">
+                {p.title}
+              </span>
+              <span className="ink-leader" aria-hidden />
+              <span className="font-mono text-[12px] text-ink/85 shrink-0 tabular-nums">
+                p. {String(pageNum).padStart(2, "0")}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="ink-divider mt-8">❦</div>
+      <p className="font-serif italic text-[11px] text-ink/55 text-center">
+        Some sections may not apply to your specific assembly.
+        Cross-reference catalog code on the cover.
+      </p>
+    </article>
+  );
+}
+
+/* Lowercase roman numerals — fine for short TOC entries (i, ii, iii …). */
+function romanLower(n: number): string {
+  if (n < 1) return "i";
+  const numerals: Array<[number, string]> = [
+    [10, "x"],
+    [9, "ix"],
+    [5, "v"],
+    [4, "iv"],
+    [1, "i"],
+  ];
+  let out = "";
+  for (const [val, sym] of numerals) {
+    while (n >= val) {
+      out += sym;
+      n -= val;
+    }
+  }
+  return out;
+}
+
+function ManualPageView({
+  page,
+  pages,
+  index,
+  total,
+  seed,
+}: {
+  page: ManualPage;
+  pages: ManualPage[];
+  index: number;
+  total: number;
+  seed: number;
+}) {
+  /* Cover is rendered by ManualView directly with no header/nav chrome.
+     TOC keeps the normal header/nav but uses its own body layout. */
+  if (page.kind === "toc") {
+    return <TableOfContentsPage pages={pages} />;
+  }
+  /* `seed` is passed through for any future per-bomb flavor on standard
+     pages; not currently used here. */
+  void seed;
   return (
     /* Page is printed text on continuous paper — no inverted bars, no
      boxes around content. Title is a serif display headline with a

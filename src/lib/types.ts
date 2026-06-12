@@ -490,7 +490,10 @@ export interface GameState {
 }
 
 export interface ManualPage {
-  moduleType: ModuleType;
+  /* "cover" and "toc" are special front-matter pages with bespoke
+     rendering. The rest are module references keyed on moduleType. */
+  kind?: "cover" | "toc" | "module";
+  moduleType?: ModuleType;
   title: string;
   sections: ManualSection[];
 }

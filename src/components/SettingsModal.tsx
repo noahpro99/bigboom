@@ -112,7 +112,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         onMouseDown={onClose}
       />
 
-      {/* Dialog — same chassis-with-stripes look as the lobby. */}
+      {/* Dialog — same chassis-with-stripes look as the lobby. The
+         data-no-swipe attribute stops the manual's swipe handler from
+         hijacking pointer drags (e.g. on a volume slider) that bubble
+         back through the React tree from the portal. */}
       <div
         className="relative z-[101] w-full max-w-lg bg-chassis border border-rib shadow-2xl flex flex-col reveal"
         style={{
@@ -120,6 +123,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           backgroundColor: "var(--color-chassis)",
         }}
         onMouseDown={(e) => e.stopPropagation()}
+        data-no-swipe="true"
       >
         <div className="absolute top-0 left-0 right-0 h-1 tx-stripes opacity-80" />
         <div className="absolute bottom-0 left-0 right-0 h-1 tx-stripes opacity-80" />
@@ -308,7 +312,10 @@ function AudioTab() {
      change happens elsewhere (e.g. mute toggled). */
   const tick = useSyncExternalStore(
     subscribeAudio,
-    () => `${isMuted()}|${getBusVolume("music")}|${getBusVolume("sfx")}|${getBusVolume("timer")}`,
+    () =>
+      `${isMuted()}|${getBusVolume("music")}|${getBusVolume(
+        "musicInGame"
+      )}|${getBusVolume("sfx")}|${getBusVolume("timer")}`,
     () => "ssr"
   );
   /* tick is only here to force re-render on changes; we read fresh values
@@ -355,7 +362,14 @@ function AudioTab() {
         bus="music"
         Icon={Music2}
         label="Music"
-        sub="Menu and atmosphere"
+        sub="Menu and lobby"
+        previewSound={null}
+      />
+      <VolumeSlider
+        bus="musicInGame"
+        Icon={Music2}
+        label="Music in Game"
+        sub="During active defusal"
         previewSound={null}
       />
       <VolumeSlider

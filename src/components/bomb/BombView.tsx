@@ -26,7 +26,6 @@ import {
 } from "../../server/game";
 import { useDisplayTime } from "../../lib/useDisplayTime";
 import { play } from "../../lib/sound";
-import { checkReleaseTiming } from "../../lib/generator";
 import type {
   GameState,
   Module,
@@ -214,17 +213,16 @@ export function BombView({ gameState }: BombViewProps) {
                       startMut.mutate({ data: { moduleId: mod.id } })
                     }
                     onHoldRelease={() => {
-                      // Client-side validation — the client has the module
-                      // config (so it knows the rule) and the exact value the
-                      // user just saw, so it decides correctness and tells
-                      // the server the verdict.
-                      const cfg = mod.config as ButtonModuleConfig;
-                      const correct = checkReleaseTiming(cfg, timeRemaining);
+                      /* Send the exact integer the client was showing
+                         at the moment of release — the server applies
+                         the timing rule against THAT value. No
+                         server-side clock comparison, no off-by-one
+                         from network/poll latency. */
                       releaseMut.mutate({
                         data: {
                           gameId: game.id,
                           moduleId: mod.id,
-                          correct,
+                          releasedAt: timeRemaining,
                         },
                       });
                     }}

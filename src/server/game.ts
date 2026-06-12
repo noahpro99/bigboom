@@ -20,6 +20,7 @@ import {
   getMemoryExpected,
   getMorseSolutionFreqIndex,
   passwordIsCorrect,
+  checkReleaseTiming,
 } from "../lib/generator";
 import type {
   GameState,
@@ -883,13 +884,14 @@ export const startHold = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// Defuser releases the held button. The client owns the verdict here — it
-// knows the rule (it's in the module config) and the timer it just displayed
-// to the user, so server-side timing checks only led to off-by-one latency
-// strikes. We trust the client's `correct` boolean and just record it.
+// Defuser releases the held button. The client sends the literal
+// integer they were SHOWING at the moment of release (`releasedAt`).
+// The server applies the timing rule against THAT value — never against
+// its own clock. This makes the result match exactly what the player
+// saw: no skew, no off-by-one from network/poll latency, no flicker.
 export const releaseHold = createServerFn({ method: "POST" })
   .validator(
-    (data: { gameId: string; moduleId: string; correct: boolean }) => data
+    (data: { gameId: string; moduleId: string; releasedAt: number }) => data
   )
   .handler(async ({ data }) => {
     const db = getDb();
@@ -901,7 +903,10 @@ export const releaseHold = createServerFn({ method: "POST" })
       data.moduleId,
     ]);
 
-    if (data.correct) {
+    const config = mod.config as ButtonModuleConfig;
+    const correct = checkReleaseTiming(config, data.releasedAt);
+
+    if (correct) {
       db.run("UPDATE modules SET solved = 1 WHERE id = ?", [data.moduleId]);
       checkAllSolved(data.gameId);
       return { ok: true, correct: true };

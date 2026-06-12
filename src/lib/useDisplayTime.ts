@@ -1,58 +1,80 @@
 import { useEffect, useRef, useState } from "react";
 
-/* Display-side timer countdown. Both players need to see the SAME number
-   at the same wall-clock moment, even if their devices' clocks disagree.
-   The fix: anchor on the server's `timeRemaining` plus the local time
-   elapsed since the moment that poll *landed in this tab*. Clock skew
-   between Defuser and Expert no longer matters — they each derive their
-   display from the same server-blessed remaining-seconds value, minus
-   their own elapsed-since-poll, which differs by at most the polling
-   interval (~1.5s) instead of the device's clock-skew.
+/* Display-side timer countdown — fully client-driven once we've seen one
+   poll, so each displayed second lasts exactly one real second. No
+   re-anchoring on every poll (which used to make the display rewind or
+   skip when extrapolation overshot the next server tick).
+
+   Strategy:
+     1. The server sends `startedAt` (absolute server epoch seconds) and
+        `timerSeconds`. These never change for a given game.
+     2. We estimate `serverOffset = server_now - client_now` from each
+        poll: serverNow ≈ startedAt + timerSeconds - serverRemaining.
+        The server floors when computing serverRemaining, so any
+        single estimate is up to 1s LOW. We keep `max(estimates)` so
+        the offset converges to the truth after a couple of polls and
+        never produces a backwards display.
+     3. Display = floor(startedAt + timerSeconds - (clientNow + offset)).
+        Both clients running this against their own (possibly-skewed)
+        clocks land on the same number within 1s as soon as their
+        offsets settle.
 
    While the game isn't active, returns the raw server value so SSR +
-   hydration agree and we don't show stale local extrapolations.
-
-   startedAt and timerSeconds are accepted for API compatibility but no
-   longer drive the displayed value. */
+   hydration agree and we don't extrapolate from a stale startedAt. */
 export function useDisplayTime(
-  _startedAt: number | null,
-  _timerSeconds: number,
+  startedAt: number | null,
+  timerSeconds: number,
   serverRemaining: number,
   status: string
 ): number {
   const [mounted, setMounted] = useState(false);
   const [, setTick] = useState(0);
 
-  /* Receipt timestamp + value at receipt, in refs so the local clock
-     interval can read them without re-rendering on every poll. */
-  const receivedAtRef = useRef<number | null>(null);
-  const baseRemainingRef = useRef<number>(serverRemaining);
+  /* server_now - client_now, both in seconds. null until first poll. */
+  const serverOffsetRef = useRef<number | null>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  /* Latch the new server value the moment it comes in. We use Date.now()
-     locally as the reference for elapsed time — both clients use their
-     OWN Date.now(), but only for the *delta* since the latch, so clock
-     skew doesn't accumulate. */
+  /* Refresh the offset on every poll. We only ever *raise* it — since
+     the server's flooring guarantees each single-poll estimate is at
+     most 1s low, the largest value across polls is the closest to
+     truth. (A pathological clock jump backwards on the client would
+     leave us stuck on the old offset; that's a corner case we trade
+     for a guaranteed-monotonic display.) */
   useEffect(() => {
-    receivedAtRef.current = Date.now();
-    baseRemainingRef.current = serverRemaining;
-  }, [serverRemaining]);
+    if (startedAt === null) return;
+    const clientNowSec = Date.now() / 1000;
+    const serverNowEstimate = startedAt + timerSeconds - serverRemaining;
+    const newOffset = serverNowEstimate - clientNowSec;
+    if (
+      serverOffsetRef.current === null ||
+      newOffset > serverOffsetRef.current
+    ) {
+      serverOffsetRef.current = newOffset;
+    }
+  }, [serverRemaining, startedAt, timerSeconds]);
 
+  /* Re-render at 10 Hz while active. The displayed value only changes
+     once per second, but the high cadence keeps the released-at value
+     accurate to within ~100ms of when the player actually let go. */
   useEffect(() => {
     if (status !== "active") return;
-    const id = setInterval(() => setTick((t) => (t + 1) % 1_000_000), 250);
+    const id = setInterval(() => setTick((t) => (t + 1) % 1_000_000), 100);
     return () => clearInterval(id);
   }, [status]);
 
-  if (!mounted || status !== "active") return serverRemaining;
-  if (receivedAtRef.current === null) return serverRemaining;
-
-  const elapsedSinceLatch = (Date.now() - receivedAtRef.current) / 1000;
-  /* Floor (not round) — the displayed "9" means the actual remaining is
-     in [9, 10). The button-hold release check on the server compares
-     against the SAME integer the user saw. */
-  return Math.max(0, Math.floor(baseRemainingRef.current - elapsedSinceLatch));
+  if (!mounted || status !== "active" || startedAt === null) {
+    return serverRemaining;
+  }
+  const offset = serverOffsetRef.current;
+  if (offset === null) {
+    /* Before the first poll lands we have no estimate — fall back to
+       the latest server value so we never show a wildly wrong number. */
+    return serverRemaining;
+  }
+  const clientNowSec = Date.now() / 1000;
+  const serverNow = clientNowSec + offset;
+  return Math.max(0, Math.floor(startedAt + timerSeconds - serverNow));
 }
