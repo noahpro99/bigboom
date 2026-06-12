@@ -68,6 +68,7 @@ function HomePage() {
       return;
     }
     setPasteError("");
+    play("menuButton");
     await navigate({
       to: "/game/$gameId",
       params: { gameId },
@@ -78,6 +79,7 @@ function HomePage() {
     const pasted = e.clipboardData.getData("text");
     if (!pasted) return;
     e.preventDefault();
+    play("menuButton");
     setPasteInput(pasted);
     joinFromText(pasted);
   }
@@ -180,6 +182,7 @@ function HomePage() {
                     setPasteError("");
                   }}
                   onPaste={handlePaste}
+                  onFocus={() => play("menuButton")}
                   placeholder="Paste invite link here"
                   className="w-full bg-void/60 border border-rib focus:border-amber/60 rounded-none px-3 py-2.5 text-bone font-mono text-sm placeholder:text-steel-light focus:outline-none transition-colors"
                 />

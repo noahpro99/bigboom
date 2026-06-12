@@ -54,6 +54,9 @@ const MUTE_KEY = "bigboom-muted";
 const cache = new Map<SoundKey, Howl>();
 const musicCache = new Map<MusicKey, Howl>();
 const activeMusic = new Set<MusicKey>();
+// Per-music target volume (the value to play at when not muted). Lets us
+// "duck" the music for the tense parts of the game and bring it back later.
+const musicTargetVolume = new Map<MusicKey, number>();
 let muted = false;
 const listeners = new Set<() => void>();
 
@@ -90,14 +93,25 @@ export function play(key: SoundKey) {
   load(key).play();
 }
 
-export function playMusic(key: MusicKey) {
+function applyMusicVolume(key: MusicKey) {
+  const h = musicCache.get(key);
+  if (!h) return;
+  const target = musicTargetVolume.get(key) ?? MUSIC_VOLUMES[key];
+  h.volume(muted ? 0 : target);
+}
+
+export function playMusic(key: MusicKey, volume?: number) {
   if (typeof window === "undefined") return;
   const h = loadMusic(key);
   activeMusic.add(key);
-  if (!h.playing()) {
-    h.volume(muted ? 0 : MUSIC_VOLUMES[key]);
-    h.play();
-  }
+  if (typeof volume === "number") musicTargetVolume.set(key, volume);
+  applyMusicVolume(key);
+  if (!h.playing()) h.play();
+}
+
+export function setMusicVolume(key: MusicKey, volume: number) {
+  musicTargetVolume.set(key, volume);
+  applyMusicVolume(key);
 }
 
 export function stopMusic(key: MusicKey) {
@@ -117,10 +131,7 @@ export function setMuted(v: boolean) {
     window.localStorage.setItem(MUTE_KEY, v ? "1" : "0");
   }
   // Apply to any music that is currently playing.
-  activeMusic.forEach((key) => {
-    const h = musicCache.get(key);
-    if (h) h.volume(v ? 0 : MUSIC_VOLUMES[key]);
-  });
+  activeMusic.forEach(applyMusicVolume);
   listeners.forEach((l) => l());
 }
 

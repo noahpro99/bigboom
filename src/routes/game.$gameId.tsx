@@ -121,14 +121,15 @@ function GamePage() {
     preloadAll();
   }, []);
 
-  // Music carries from the home page through the lobby. As soon as the bomb
-  // is armed we kill it so the silence + ticking carry the tension. If the
-  // round ends (won/lost) we bring it back for the overlay.
+  // Music carries through the whole experience. We just duck the volume
+  // hard while the bomb is armed so the ticks and chatter sit on top, and
+  // bring it back up for the lobby + game-over overlay.
   useEffect(() => {
     const status = gameState?.game.status;
-    if (status === "waiting") playMusic("menuMusic");
-    else if (status === "active") stopMusic("menuMusic");
-    else if (status === "won" || status === "lost") playMusic("menuMusic");
+    if (status === "active") playMusic("menuMusic", 0.04);
+    else if (status === "waiting" || status === "won" || status === "lost") {
+      playMusic("menuMusic", 0.12);
+    }
   }, [gameState?.game.status]);
 
   useEffect(() => {
@@ -297,6 +298,11 @@ function LobbyView({
     <div className="min-h-screen tx-grid relative overflow-hidden">
       <div className="absolute top-0 left-0 right-0 h-1.5 tx-stripes opacity-80" />
       <div className="absolute bottom-0 left-0 right-0 h-1.5 tx-stripes opacity-80" />
+
+      {/* Floating mute toggle */}
+      <div className="absolute top-3 right-3 z-30">
+        <MuteButton variant="dark" />
+      </div>
 
       <div className="min-h-screen flex flex-col items-center justify-center px-4 py-10 relative z-10">
         {/* Header */}
