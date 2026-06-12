@@ -77,6 +77,78 @@ button:disabled,
   z-index: 0;
 }
 
+/* ----- Metal — brushed/worn industrial steel.
+   Layered with pseudo-elements so any element with .metal becomes a
+   slightly imperfect piece of stamped metal: brushed grain, scratches,
+   dirt/pitting at edges, and tiny off-alignment via --tilt. */
+
+@property --tilt {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* Anisotropic brushed-metal grain. Horizontal streaks dominate via a
+   non-square base frequency — like a polished steel panel pulled across a
+   belt. Sits as a low-opacity overlay tinted to the underlying chassis. */
+.tx-brushed {
+  position: relative;
+}
+.tx-brushed::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    /* horizontal lighting streaks — uneven, off-center highlight */
+    linear-gradient(180deg,
+      rgba(255,255,255,0.05) 0%,
+      rgba(255,255,255,0.02) 18%,
+      transparent 38%,
+      rgba(0,0,0,0.15) 72%,
+      rgba(0,0,0,0.3) 100%),
+    /* brushed grain — wide horizontal turbulence */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='240'><filter id='b'><feTurbulence type='turbulence' baseFrequency='0.012 1.4' numOctaves='2' seed='4' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.8 0 0 0 0 0.85 0 0 0 0 0.95 0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>");
+  background-size: cover, 600px 240px;
+  mix-blend-mode: overlay;
+  opacity: 0.55;
+  z-index: 0;
+  border-radius: inherit;
+}
+
+/* Random scratches + dirt pitting — randomized SVG noise + a few hand-placed
+   nicks. Lower z so it sits under content but over the brushed grain. */
+.tx-worn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    /* a couple of long thin scratches at non-perpendicular angles */
+    linear-gradient(83deg, transparent 18%, rgba(255,255,255,0.10) 18.05%, transparent 18.4%),
+    linear-gradient(96deg, transparent 62%, rgba(0,0,0,0.20) 62.05%, transparent 62.6%),
+    linear-gradient(78deg, transparent 41%, rgba(255,255,255,0.06) 41.04%, transparent 41.3%),
+    /* fine pits/dust */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='320'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='2' seed='12' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.7 -0.3'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>"),
+    /* edge soiling — darker around perimeter as if oil collected at the seams */
+    radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.35) 100%);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 320px 320px, 100% 100%;
+  mix-blend-mode: multiply;
+  opacity: 0.55;
+  z-index: 1;
+  border-radius: inherit;
+}
+
+/* Chassis-wide brushed steel backdrop — used behind the whole bomb body. */
+.tx-metal-deep {
+  background-color: var(--color-chassis);
+  background-image:
+    radial-gradient(ellipse at 30% 0%, rgba(120, 150, 200, 0.06) 0%, transparent 55%),
+    radial-gradient(ellipse at 80% 100%, rgba(0, 0, 0, 0.5) 0%, transparent 60%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='800' height='320'><filter id='m'><feTurbulence type='turbulence' baseFrequency='0.008 1.0' numOctaves='2' seed='7' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.65 0 0 0 0 0.72 0 0 0 0 0.85 0 0 0 0.3 0'/></filter><rect width='100%25' height='100%25' filter='url(%23m)'/></svg>");
+  background-size: auto, auto, 800px 320px;
+}
+
 .tx-grid {
   background-color: var(--color-void);
   background-image:
@@ -115,9 +187,17 @@ button:disabled,
 .tx-paper {
   background-color: var(--color-paper);
   background-image:
-    radial-gradient(ellipse at 20% 10%, rgba(168, 49, 42, 0.04) 0%, transparent 60%),
-    radial-gradient(ellipse at 80% 90%, rgba(14, 31, 58, 0.06) 0%, transparent 50%),
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.2 0 0 0 0 0.1 0 0 0 0 0 0 0 0 0.045 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    /* tea/age stains — soft, asymmetric */
+    radial-gradient(ellipse 70% 50% at 18% 12%, rgba(168, 49, 42, 0.05) 0%, transparent 70%),
+    radial-gradient(ellipse 65% 45% at 82% 88%, rgba(14, 31, 58, 0.07) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 25% at 65% 38%, rgba(140, 90, 30, 0.05) 0%, transparent 70%),
+    /* paper fiber — fine fractal noise */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='420'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18 0 0 0 0 0.10 0 0 0 0 0.00 0 0 0 0.075 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"),
+    /* coarse pulp fibers — anisotropic, look like long fibers in the sheet */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='240'><filter id='f'><feTurbulence type='turbulence' baseFrequency='0.6 0.03' numOctaves='2' seed='5' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.20 0 0 0 0 0.13 0 0 0 0 0.03 0 0 0 0.05 0'/></filter><rect width='100%25' height='100%25' filter='url(%23f)'/></svg>"),
+    /* very subtle vignette toward the gutter for warmth */
+    radial-gradient(ellipse at 50% 50%, transparent 60%, rgba(140, 100, 50, 0.05) 100%);
+  background-size: auto, auto, auto, 420px 420px, 600px 240px, auto;
 }
 
 .tx-paper-lines {
@@ -127,6 +207,88 @@ button:disabled,
       transparent 31px,
       rgba(14, 31, 58, 0.05) 32px
     );
+}
+
+/* ----- Paper page-stack —
+   The visible block of pages under the active sheet. Two thin slivers at
+   the left and right of the page reveal the edge of the page block. During
+   a page flip the active sheet slides over these, exposing more of the
+   underlying stack momentarily.
+
+   The wrapper provides the slivers; the active sheet sits on top. */
+.paper-stack {
+  position: relative;
+}
+/* The visible cut edge of the page stack — yellowed, with thin
+   alternating bands so each page in the block reads as its own sheet. */
+.paper-stack::before,
+.paper-stack::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 8px;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(180deg,
+      var(--color-paper-stain) 0,
+      var(--color-paper-stain) 2px,
+      var(--color-paper-dim) 2px,
+      var(--color-paper-dim) 4px,
+      var(--color-paper) 4px,
+      var(--color-paper) 6px),
+    linear-gradient(180deg,
+      rgba(140, 100, 50, 0.18) 0%,
+      rgba(140, 100, 50, 0.05) 35%,
+      rgba(80, 50, 20, 0.18) 100%);
+  background-blend-mode: multiply;
+  box-shadow:
+    inset 0 1px 0 rgba(0,0,0,0.08),
+    inset 0 -1px 0 rgba(0,0,0,0.1);
+  z-index: 2;
+}
+.paper-stack::before {
+  left: 0;
+  border-right: 1px solid rgba(80, 50, 20, 0.25);
+  box-shadow:
+    inset 0 0 6px rgba(80, 50, 20, 0.18),
+    1px 0 0 rgba(0, 0, 0, 0.08);
+}
+.paper-stack::after {
+  right: 0;
+  border-left: 1px solid rgba(80, 50, 20, 0.25);
+  box-shadow:
+    inset 0 0 6px rgba(80, 50, 20, 0.18),
+    -1px 0 0 rgba(0, 0, 0, 0.08);
+}
+
+/* When the wrapper is "flipping" (a page mid-transition), pull the stack
+   edges slightly inward and deepen the shadow — visually mimics the page
+   curling/lifting away to reveal the next sheet. */
+.paper-stack.is-flipping::before {
+  animation: stack-edge-pulse-l 0.32s cubic-bezier(0.4, 0, 0.6, 1) both;
+}
+.paper-stack.is-flipping::after {
+  animation: stack-edge-pulse-r 0.32s cubic-bezier(0.4, 0, 0.6, 1) both;
+}
+@keyframes stack-edge-pulse-l {
+  from { width: 8px; opacity: 1; }
+  to   { width: 14px; opacity: 1; }
+}
+@keyframes stack-edge-pulse-r {
+  from { width: 8px; opacity: 1; }
+  to   { width: 14px; opacity: 1; }
+}
+
+/* The active sheet — sits above the stack edges and casts a paper-feel
+   shadow so it visibly lifts off the block. */
+.paper-sheet {
+  position: relative;
+  z-index: 3;
+  box-shadow:
+    0 0 0 1px rgba(80, 50, 20, 0.08),
+    0 1px 2px rgba(80, 50, 20, 0.12),
+    0 6px 14px rgba(80, 50, 20, 0.18);
 }
 
 /* ----- Display helpers ----- */
@@ -175,34 +337,177 @@ button:disabled,
 .stamp-sm { padding: 2px 8px; font-size: 0.7rem; }
 
 .bezel {
-  background: linear-gradient(180deg, #1c2840 0%, #0f1626 100%);
+  position: relative;
+  background:
+    /* uneven horizontal banding — like a stamped panel that wasn't quite flat */
+    linear-gradient(180deg, #1c2840 0%, #182236 22%, #131c2e 51%, #0f1626 78%, #0c1322 100%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     inset 0 -1px 0 rgba(0, 0, 0, 0.6),
     inset 0 0 0 1px rgba(80, 100, 140, 0.15),
-    0 4px 14px rgba(0, 0, 0, 0.45);
+    /* uneven outer shadow — heavier on one side, like overhead lighting */
+    -2px 6px 14px rgba(0, 0, 0, 0.55),
+    2px 2px 6px rgba(0, 0, 0, 0.3);
+  isolation: isolate;
 }
+/* Brushed grain on every bezel — anisotropic SVG turbulence. The
+   background is shifted per panel by --pit-seed so the same tile doesn't
+   line up across modules. */
+.bezel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='500' height='200'><filter id='b'><feTurbulence type='turbulence' baseFrequency='0.014 1.6' numOctaves='2' seed='9' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.85 0 0 0 0 0.9 0 0 0 0 1 0 0 0 0.45 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>");
+  background-size: 500px 200px;
+  background-position: calc(var(--pit-seed) * 13px) calc(var(--pit-seed) * 5px);
+  mix-blend-mode: overlay;
+  opacity: 0.5;
+  z-index: 0;
+}
+/* Scratches + edge soiling + corner shading. Each scratch is parametrized
+   so siblings can override the angles/positions and never share the same
+   crack pattern. Defaults below; overrides via :nth-of-type further down. */
+.bezel {
+  --sc1-angle: 82deg;  --sc1-pos: 22%;  --sc1-len: 0.32%;
+  --sc2-angle: 94deg;  --sc2-pos: 58%;  --sc2-len: 0.51%;
+  --sc3-angle: 76deg;  --sc3-pos: 73%;  --sc3-len: 0.22%;
+  --pit-seed: 21;
+}
+.bezel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background-image:
+    linear-gradient(var(--sc1-angle), transparent calc(var(--sc1-pos) - 0.02%), rgba(255,255,255,0.07) var(--sc1-pos), transparent calc(var(--sc1-pos) + var(--sc1-len))),
+    linear-gradient(var(--sc2-angle), transparent calc(var(--sc2-pos) - 0.02%), rgba(0,0,0,0.22) var(--sc2-pos), transparent calc(var(--sc2-pos) + var(--sc2-len))),
+    linear-gradient(var(--sc3-angle), transparent calc(var(--sc3-pos) - 0.02%), rgba(255,255,255,0.05) var(--sc3-pos), transparent calc(var(--sc3-pos) + var(--sc3-len))),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='1.7' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.6 -0.25'/></filter><rect width='100%25' height='100%25' filter='url(%23p)'/></svg>"),
+    radial-gradient(ellipse at 50% 50%, transparent 60%, rgba(0,0,0,0.4) 100%);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 240px 240px, 100% 100%;
+  /* Shift the pit texture per panel so the same SVG noise sample doesn't
+     tile the same way on every module. --pit-seed offset varies the
+     background-position. */
+  background-position:
+    0 0,
+    0 0,
+    0 0,
+    calc(var(--pit-seed) * 7px) calc(var(--pit-seed) * 11px),
+    0 0;
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+  z-index: 1;
+}
+/* Per-sibling scratch variations — each panel in the bomb grid gets its
+   own crack pattern: different angles, different positions, different
+   pit-noise offset. Cycles every 6 so a long list of modules keeps
+   varying instead of repeating after 2. */
+.bezel:nth-of-type(6n+1) {
+  --sc1-angle: 82deg;  --sc1-pos: 22%;  --sc1-len: 0.32%;
+  --sc2-angle: 94deg;  --sc2-pos: 58%;  --sc2-len: 0.51%;
+  --sc3-angle: 76deg;  --sc3-pos: 73%;  --sc3-len: 0.22%;
+  --pit-seed: 7;
+}
+.bezel:nth-of-type(6n+2) {
+  --sc1-angle: 71deg;  --sc1-pos: 14%;  --sc1-len: 0.24%;
+  --sc2-angle: 102deg; --sc2-pos: 47%;  --sc2-len: 0.6%;
+  --sc3-angle: 88deg;  --sc3-pos: 83%;  --sc3-len: 0.18%;
+  --pit-seed: 13;
+}
+.bezel:nth-of-type(6n+3) {
+  --sc1-angle: 96deg;  --sc1-pos: 35%;  --sc1-len: 0.4%;
+  --sc2-angle: 79deg;  --sc2-pos: 64%;  --sc2-len: 0.3%;
+  --sc3-angle: 110deg; --sc3-pos: 12%;  --sc3-len: 0.5%;
+  --pit-seed: 19;
+}
+.bezel:nth-of-type(6n+4) {
+  --sc1-angle: 65deg;  --sc1-pos: 51%;  --sc1-len: 0.45%;
+  --sc2-angle: 113deg; --sc2-pos: 28%;  --sc2-len: 0.22%;
+  --sc3-angle: 81deg;  --sc3-pos: 88%;  --sc3-len: 0.32%;
+  --pit-seed: 23;
+}
+.bezel:nth-of-type(6n+5) {
+  --sc1-angle: 104deg; --sc1-pos: 41%;  --sc1-len: 0.27%;
+  --sc2-angle: 72deg;  --sc2-pos: 74%;  --sc2-len: 0.55%;
+  --sc3-angle: 92deg;  --sc3-pos: 18%;  --sc3-len: 0.35%;
+  --pit-seed: 31;
+}
+.bezel:nth-of-type(6n+6) {
+  --sc1-angle: 78deg;  --sc1-pos: 67%;  --sc1-len: 0.36%;
+  --sc2-angle: 87deg;  --sc2-pos: 31%;  --sc2-len: 0.42%;
+  --sc3-angle: 99deg;  --sc3-pos: 9%;   --sc3-len: 0.28%;
+  --pit-seed: 37;
+}
+
+/* Subtle per-panel tilt + displacement — no real-world panel sits at
+   exactly 0° or perfectly on its grid cell. */
+.bezel {
+  transform:
+    translate(var(--panel-dx, 0px), var(--panel-dy, 0px))
+    rotate(var(--tilt, 0deg));
+}
+.bezel:nth-of-type(6n+1) { --tilt: -0.4deg;  --panel-dx: -2px;  --panel-dy:  1px; }
+.bezel:nth-of-type(6n+2) { --tilt:  0.3deg;  --panel-dx:  3px;  --panel-dy: -2px; }
+.bezel:nth-of-type(6n+3) { --tilt:  0.5deg;  --panel-dx: -1px;  --panel-dy: -3px; }
+.bezel:nth-of-type(6n+4) { --tilt: -0.25deg; --panel-dx:  2px;  --panel-dy:  2px; }
+.bezel:nth-of-type(6n+5) { --tilt:  0.15deg; --panel-dx: -3px;  --panel-dy: -1px; }
+.bezel:nth-of-type(6n+6) { --tilt: -0.55deg; --panel-dx:  1px;  --panel-dy:  3px; }
+/* Make sure children render above the texture layers. */
+.bezel > * { position: relative; z-index: 2; }
 
 .screw {
   position: absolute;
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #5a6478 0%, #2b3242 60%, #161a25 100%);
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.45), 0 1px 1px rgba(255,255,255,0.05);
+  /* Slight rotation jitter — each screw is set with a CSS variable; we set
+     defaults via nth-child below so screws on the same panel aren't all
+     perfectly aligned. */
+  transform: rotate(var(--screw-rot, 0deg));
+  background:
+    radial-gradient(circle at 35% 30%, #6a7488 0%, #3b4456 32%, #1e2533 68%, #0e1320 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0,0,0,0.55),
+    inset 0 -1px 1px rgba(255,255,255,0.05),
+    0 1px 1.5px rgba(0,0,0,0.6),
+    0 0 0 1px rgba(0,0,0,0.35);
 }
 .screw::before, .screw::after {
-  content: ""; position: absolute; background: #0a0d14;
+  content: ""; position: absolute; background: #07090f;
   border-radius: 1px;
+  box-shadow: 0 0 0 0.5px rgba(255,255,255,0.04);
 }
-.screw::before { top: 1px; bottom: 1px; left: 4.5px; width: 1px; }
-.screw::after  { left: 1px; right: 1px; top: 4.5px; height: 1px; transform: rotate(35deg); }
+/* Slot screw — single slot, not a perfect cross. The slot itself is at a
+   small angle (set via --slot-rot) so two screws on the same panel look
+   like they were driven separately. */
+.screw::before {
+  top: 1.5px; bottom: 1.5px; left: 4.6px; width: 0.8px;
+  transform: rotate(var(--slot-rot, 0deg));
+  transform-origin: center;
+}
+.screw::after { display: none; }
+/* Per-screw jitter — different rotations per corner. The corners of any
+   panel are top-left/top-right/bottom-left/bottom-right in DOM order via
+   the BombView modules, so this gives each its own driven angle. */
+.bezel > .screw:nth-of-type(1) { --screw-rot: -3deg; --slot-rot: 38deg; }
+.bezel > .screw:nth-of-type(2) { --screw-rot: 4deg;  --slot-rot: -12deg; }
+.bezel > .screw:nth-of-type(3) { --screw-rot: -2deg; --slot-rot: 71deg; }
+.bezel > .screw:nth-of-type(4) { --screw-rot: 5deg;  --slot-rot: 22deg; }
 
 /* ----- 3D push-button —
    Used for symbol/button-module faces. Layered shadows + highlight give a
-   raised cap on a sunken bezel; the .btn-3d-press modifier lowers it. */
+   raised cap on a sunken bezel; the .btn-3d-press modifier lowers it.
+   The button face is real brushed metal — turbulence overlay drawn via
+   ::before; ::after holds an optional engraved-symbol shadow layer. */
 .btn-3d {
-  background: linear-gradient(180deg, #2a3346 0%, #1a2334 50%, #131b2a 100%);
+  position: relative;
+  isolation: isolate;
+  background:
+    linear-gradient(180deg, #303a52 0%, #1f2a40 38%, #161f30 72%, #0f1626 100%);
   box-shadow:
     /* Outer ring/socket */
     0 0 0 1px rgba(0, 0, 0, 0.65),
@@ -211,9 +516,76 @@ button:disabled,
     0 5px 0 0 rgba(0, 0, 0, 0.55),
     0 7px 12px rgba(0, 0, 0, 0.5),
     /* Inner highlight on top */
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
     inset 0 -2px 4px rgba(0, 0, 0, 0.5);
   transition: transform 90ms ease, box-shadow 90ms ease;
+}
+/* Brushed grain + scratches on the cap. Each button gets its own
+   scratch angles/positions via --bsc* / --bpit-seed so the four caps in a
+   symbol module never share the same wear marks. */
+.btn-3d {
+  --bsc1-angle: 75deg;  --bsc1-pos: 33%;  --bsc1-len: 0.4%;
+  --bsc2-angle: 98deg;  --bsc2-pos: 64%;  --bsc2-len: 0.5%;
+  --bpit-seed: 1;
+}
+.btn-3d::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 0;
+  background-image:
+    linear-gradient(180deg,
+      rgba(255,255,255,0.10) 0%,
+      rgba(255,255,255,0.03) 22%,
+      transparent 48%,
+      rgba(0,0,0,0.18) 100%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='120'><filter id='b'><feTurbulence type='turbulence' baseFrequency='0.02 1.7' numOctaves='2' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.9 0 0 0 0 0.94 0 0 0 0 1 0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23b)'/></svg>"),
+    linear-gradient(var(--bsc1-angle), transparent calc(var(--bsc1-pos) - 0.02%), rgba(255,255,255,0.07) var(--bsc1-pos), transparent calc(var(--bsc1-pos) + var(--bsc1-len))),
+    linear-gradient(var(--bsc2-angle), transparent calc(var(--bsc2-pos) - 0.02%), rgba(0,0,0,0.22) var(--bsc2-pos), transparent calc(var(--bsc2-pos) + var(--bsc2-len)));
+  background-size: 100% 100%, 240px 120px, 100% 100%, 100% 100%;
+  background-position:
+    0 0,
+    calc(var(--bpit-seed) * 9px) calc(var(--bpit-seed) * 7px),
+    0 0,
+    0 0;
+  mix-blend-mode: overlay;
+  opacity: 0.6;
+}
+.btn-3d > * { position: relative; z-index: 2; }
+/* Per-button tilt + displacement — each cap was pressed in with slightly
+   different alignment and seated at a slightly different offset. The
+   pressed state composes with translate(0, 4px). */
+.btn-3d {
+  transform:
+    translate(var(--btn-dx, 0px), var(--btn-dy, 0px))
+    rotate(var(--btn-tilt, 0deg));
+}
+/* Buttons are rigid hardware — tilt/displacement here is *very* small,
+   just enough to break the assembly-line look. Think factory tolerance,
+   not visibly crooked. */
+.btn-3d:nth-of-type(4n+1) {
+  --bsc1-angle: 75deg;  --bsc1-pos: 33%; --bsc2-angle: 98deg;  --bsc2-pos: 64%; --bpit-seed: 3;
+  --btn-tilt: -0.3deg; --btn-dx: -0.4px; --btn-dy:  0.2px;
+}
+.btn-3d:nth-of-type(4n+2) {
+  --bsc1-angle: 102deg; --bsc1-pos: 21%; --bsc2-angle: 71deg;  --bsc2-pos: 58%; --bpit-seed: 11;
+  --btn-tilt:  0.2deg; --btn-dx:  0.3px; --btn-dy: -0.2px;
+}
+.btn-3d:nth-of-type(4n+3) {
+  --bsc1-angle: 88deg;  --bsc1-pos: 48%; --bsc2-angle: 113deg; --bsc2-pos: 72%; --bpit-seed: 17;
+  --btn-tilt:  0.4deg; --btn-dx: -0.2px; --btn-dy: -0.3px;
+}
+.btn-3d:nth-of-type(4n+4) {
+  --bsc1-angle: 65deg;  --bsc1-pos: 38%; --bsc2-angle: 95deg;  --bsc2-pos: 19%; --bpit-seed: 23;
+  --btn-tilt: -0.15deg; --btn-dx:  0.4px; --btn-dy:  0.3px;
+}
+.btn-3d:active:not(:disabled),
+.btn-3d-press {
+  transform:
+    translate(var(--btn-dx, 0px), calc(var(--btn-dy, 0px) + 4px))
+    rotate(var(--btn-tilt, 0deg));
 }
 .btn-3d:hover:not(:disabled) {
   background: linear-gradient(180deg, #324059 0%, #1e293d 50%, #131b2a 100%);
@@ -252,11 +624,52 @@ button:disabled,
 
 /* Connector pin — used for wire module top/bottom strips */
 .pin-3d {
-  background: radial-gradient(circle at 30% 25%, #aab4c5 0%, #6a7488 32%, #2e3648 72%, #14182a 100%);
+  position: relative;
+  background: radial-gradient(circle at 28% 22%, #c4cdde 0%, #7a849a 28%, #3a4256 65%, #161a28 100%);
   box-shadow:
-    inset 0 0 0 1px rgba(0, 0, 0, 0.45),
-    0 1px 0 rgba(255, 255, 255, 0.05),
-    0 2px 3px rgba(0, 0, 0, 0.55);
+    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.05),
+    0 1px 0 rgba(255, 255, 255, 0.06),
+    0 2px 3px rgba(0, 0, 0, 0.6);
+}
+.pin-3d::after {
+  content: "";
+  position: absolute;
+  inset: 25% 25% auto 28%;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.65), transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* ----- Engraved symbol —
+   Used on the symbol module's metal push-buttons. The stroke itself is
+   the dark interior of the cut (currentColor → near-black). A bright
+   drop-shadow offset *up* paints the bevel highlight on the upper rim,
+   and a dark drop-shadow offset *down* paints the recessed shadow at
+   the bottom of the groove. The result reads as the glyph having been
+   pressed/milled into the metal cap, not painted on top.
+
+   Applied to the <div> wrapping <GlyphSvg> so the filters stack over
+   the SVG's stroke alpha mask. */
+.engraved {
+  color: #0a0d16;
+  filter:
+    drop-shadow(0 -0.5px 0 rgba(220, 232, 255, 0.85))
+    drop-shadow(0 -1px 0.5px rgba(150, 175, 215, 0.45))
+    drop-shadow(0 0.6px 0.4px rgba(0, 0, 0, 0.9))
+    drop-shadow(0 1.2px 1.2px rgba(0, 0, 0, 0.55));
+}
+.engraved-armed {
+  /* When pressed (armed), the engraving fills with green phosphor —
+     like the cut was backlit. Still keeps the bevel highlights. */
+  color: #00f5a0;
+  filter:
+    drop-shadow(0 -0.5px 0 rgba(220, 255, 235, 0.85))
+    drop-shadow(0 -1px 0.5px rgba(150, 230, 195, 0.45))
+    drop-shadow(0 0.6px 0.4px rgba(0, 0, 0, 0.9))
+    drop-shadow(0 1.2px 1.2px rgba(0, 0, 0, 0.55))
+    drop-shadow(0 0 6px rgba(0, 245, 160, 0.7));
 }
 
 .wire-cut {
@@ -288,21 +701,23 @@ button:disabled,
    Pages slide off in the direction the reader is going (next → off-left,
    prev → off-right) and the new page slides in from the opposite side. */
 
+/* Paper page flip — translate + a tiny tilt and lift so the sheet looks
+   like a real page rotating off the stack instead of a flat slide. */
 @keyframes page-exit-left {
-  from { transform: translateX(0);     opacity: 1; }
-  to   { transform: translateX(-32%);  opacity: 0; }
+  from { transform: translateX(0)    rotate(0deg)    translateY(0);    opacity: 1; box-shadow: 0 0 0 1px rgba(80,50,20,0.08), 0 1px 2px rgba(80,50,20,0.12), 0 6px 14px rgba(80,50,20,0.18); }
+  to   { transform: translateX(-34%) rotate(-1.4deg) translateY(-6px); opacity: 0; box-shadow: 0 0 0 1px rgba(80,50,20,0.10), -6px 4px 10px rgba(80,50,20,0.28), -12px 10px 24px rgba(80,50,20,0.22); }
 }
 @keyframes page-exit-right {
-  from { transform: translateX(0);    opacity: 1; }
-  to   { transform: translateX(32%);  opacity: 0; }
+  from { transform: translateX(0)    rotate(0deg)   translateY(0);    opacity: 1; box-shadow: 0 0 0 1px rgba(80,50,20,0.08), 0 1px 2px rgba(80,50,20,0.12), 0 6px 14px rgba(80,50,20,0.18); }
+  to   { transform: translateX(34%)  rotate(1.4deg) translateY(-6px); opacity: 0; box-shadow: 0 0 0 1px rgba(80,50,20,0.10), 6px 4px 10px rgba(80,50,20,0.28), 12px 10px 24px rgba(80,50,20,0.22); }
 }
 @keyframes page-enter-from-right {
-  from { transform: translateX(32%);  opacity: 0; }
-  to   { transform: translateX(0);    opacity: 1; }
+  from { transform: translateX(34%)  rotate(1.2deg)  translateY(-4px); opacity: 0; }
+  to   { transform: translateX(0)    rotate(0deg)    translateY(0);    opacity: 1; }
 }
 @keyframes page-enter-from-left {
-  from { transform: translateX(-32%); opacity: 0; }
-  to   { transform: translateX(0);    opacity: 1; }
+  from { transform: translateX(-34%) rotate(-1.2deg) translateY(-4px); opacity: 0; }
+  to   { transform: translateX(0)    rotate(0deg)    translateY(0);    opacity: 1; }
 }
 
 .animate-page-exit-left {

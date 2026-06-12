@@ -11,24 +11,96 @@ interface SymbolsModuleProps {
 function GlyphSvg({
   paths,
   className,
+  stroke,
+  strokeWidth = 6,
 }: {
   paths: string[];
   className?: string;
+  stroke?: string;
+  strokeWidth?: number;
 }) {
   return (
     <svg
       viewBox="0 0 100 100"
       className={className}
       fill="none"
-      stroke="currentColor"
+      stroke={stroke ?? "currentColor"}
       strokeLinecap="round"
       strokeLinejoin="round"
-      strokeWidth="6"
+      strokeWidth={strokeWidth}
     >
       {paths.map((d, i) => (
         <path key={i} d={d} />
       ))}
     </svg>
+  );
+}
+
+/* Engraved glyph — three stacked SVGs of the same path:
+   1. Highlight rim, offset up — catches light on the upper bevel edge.
+   2. Shadow rim, offset down — the recessed lower lip of the cut.
+   3. The cut interior on top, slightly translucent dark so it reads as
+      a dark line but the brushed metal below still shows through faintly.
+   Strokes are slightly thicker on the rims so the highlight/shadow
+   peek out from behind the main cut. */
+function EngravedGlyph({
+  paths,
+  armed,
+}: {
+  paths: string[];
+  armed: boolean;
+}) {
+  const cut = armed ? "#0a3e28" : "#070a14";
+  const cutFill = armed ? "#00f5a0" : "#1a2030";
+  const hi = armed ? "rgba(180,255,220,0.7)" : "rgba(230,238,255,0.55)";
+  const lo = armed ? "rgba(0,0,0,0.7)" : "rgba(0,0,0,0.85)";
+  return (
+    <div className="relative w-full h-full">
+      {/* Highlight rim — offset up so it peeks out as a bright lip
+          above the cut. Slightly thicker stroke so it's visible. */}
+      <GlyphSvg
+        paths={paths}
+        stroke={hi}
+        strokeWidth={7.5}
+        className="absolute inset-0 w-full h-full"
+      />
+      {/* Shadow rim — offset down, peeks out as a darker lip below. */}
+      <div
+        className="absolute inset-0"
+        style={{ transform: "translateY(1.4px)" }}
+      >
+        <GlyphSvg
+          paths={paths}
+          stroke={lo}
+          strokeWidth={7.5}
+          className="w-full h-full"
+        />
+      </div>
+      {/* The cut itself — on top, original stroke width. The highlight
+          shows as a 1.4px rim above and shadow as a rim below.
+          Outer dark ring keeps the cut crisp; inner color is the
+          engraved-channel fill (dark for unpressed, bright phosphor
+          for armed). */}
+      <div
+        className="absolute inset-0"
+        style={{ transform: "translateY(-1.4px)" }}
+      >
+        <GlyphSvg
+          paths={paths}
+          stroke={cut}
+          strokeWidth={6}
+          className="absolute inset-0 w-full h-full"
+        />
+        <GlyphSvg
+          paths={paths}
+          stroke={cutFill}
+          strokeWidth={4}
+          className={`absolute inset-0 w-full h-full ${
+            armed ? "drop-shadow-[0_0_4px_rgba(0,245,160,0.7)]" : ""
+          }`}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -112,12 +184,7 @@ export function SymbolsModule({
               } ${!isInteractable && !pressed ? "opacity-60" : ""}`}
             >
               <div className="relative w-14 h-14">
-                <GlyphSvg
-                  paths={sym.paths}
-                  className={`w-full h-full transition-colors drop-shadow-[0_1px_0_rgba(0,0,0,0.6)] ${
-                    pressed ? "text-phosphor" : "text-bone"
-                  }`}
-                />
+                <EngravedGlyph paths={sym.paths} armed={pressed} />
                 {pressed && (
                   <div className="absolute -top-2 -right-2">
                     <div className="w-5 h-5 rounded-full bg-phosphor/90 shadow-[0_0_8px_#00f5a0] border border-phosphor flex items-center justify-center">
@@ -131,13 +198,6 @@ export function SymbolsModule({
         })}
       </div>
 
-      {!module.solved && (
-        <p className="mt-3 text-[9px] text-bone-dim/60 font-mono text-center tracking-widest uppercase">
-          {pressedIds.length === 0
-            ? "Describe symbols to Expert · press in their order"
-            : `${pressedIds.length} / ${total} pressed`}
-        </p>
-      )}
     </div>
   );
 }

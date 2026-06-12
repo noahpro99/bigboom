@@ -164,7 +164,12 @@ export function ButtonModule({
               : "cursor-pointer"
           } ${holding ? "btn-press" : ""}`}
           style={{
-            // Radial highlight on top-left for a glossy domed cap
+            // Radial highlight on top-left for a glossy domed cap.
+            // Slight rigid-hardware tilt + offset — factory tolerance,
+            // not visibly crooked. `btn-press` adds the held-down nudge.
+            transform: `translate(0.4px, -0.3px) rotate(0.3deg)${
+              holding ? " translateY(3px)" : ""
+            }`,
             background: `radial-gradient(ellipse at 32% 28%, color-mix(in srgb, ${bgColor} 60%, #fff) 0%, ${bgColor} 35%, color-mix(in srgb, ${bgColor} 70%, #000) 100%)`,
             color: textColor,
             boxShadow: holding
@@ -214,11 +219,6 @@ export function ButtonModule({
           </div>
         )}
 
-        {!holding && !module.solved && (
-          <p className="text-[9px] text-bone-dim/70 font-mono text-center tracking-widest uppercase max-w-[200px]">
-            Tap to press · Hold to grab
-          </p>
-        )}
       </div>
     </div>
   );

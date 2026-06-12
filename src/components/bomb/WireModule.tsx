@@ -58,23 +58,50 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
         </div>
       </div>
 
-      {/* Top connector strip */}
+      {/* Top connector strip — each pin is nudged a fraction of a pixel
+          off perfect alignment so the row reads as hand-mounted. */}
       <div className="flex justify-around mb-1">
-        {config.slots.map((_, i) => (
-          <div
-            key={`top-${i}`}
-            className="w-3 h-3 rounded-full pin-3d"
-          />
-        ))}
+        {config.slots.map((_, i) => {
+          const PIN_JITTER = [
+            { dx: -0.6, dy:  0.4, r: -8 },
+            { dx:  0.5, dy: -0.3, r:  6 },
+            { dx: -0.2, dy:  0.6, r: -4 },
+            { dx:  0.7, dy:  0.2, r:  10 },
+            { dx: -0.4, dy: -0.5, r:  3 },
+            { dx:  0.3, dy:  0.5, r: -7 },
+          ];
+          const j = PIN_JITTER[i % PIN_JITTER.length];
+          return (
+            <div
+              key={`top-${i}`}
+              className="w-3 h-3 rounded-full pin-3d"
+              style={{
+                transform: `translate(${j.dx}px, ${j.dy}px) rotate(${j.r}deg)`,
+              }}
+            />
+          );
+        })}
       </div>
 
-      {/* Slots */}
+      {/* Slots — wires are nudged + tilted independently. Each wire's
+          tilt is small enough to read as "not perfectly straight" but
+          large enough to break the assembly-line look. */}
       <div className="relative flex justify-around py-6">
         {config.slots.map((slot, i) => {
           const isEmpty = slot === null;
           const isCut = cutWires.includes(i);
           const clickable = !isEmpty && !disabled && !isCut && !module.solved;
           const color = !isEmpty ? WIRE_COLORS[slot!.color] ?? "#888" : null;
+
+          const WIRE_JITTER = [
+            { dx: -1.5, tilt: -2.4 },
+            { dx:  1.2, tilt:  1.7 },
+            { dx: -0.6, tilt: -1.1 },
+            { dx:  1.8, tilt:  2.8 },
+            { dx: -1.2, tilt:  0.9 },
+            { dx:  0.7, tilt: -3.2 },
+          ];
+          const j = WIRE_JITTER[i % WIRE_JITTER.length];
 
           return (
             <button
@@ -103,6 +130,8 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
                     background: `linear-gradient(90deg, color-mix(in srgb, ${color} 55%, #000) 0%, ${color} 35%, color-mix(in srgb, ${color} 70%, #fff) 55%, ${color} 85%, color-mix(in srgb, ${color} 60%, #000) 100%)`,
                     boxShadow: `0 0 6px ${color}80, inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(0,0,0,0.4)`,
                     opacity: isCut ? 0.3 : 1,
+                    transform: `translateX(${j.dx}px) rotate(${j.tilt}deg)`,
+                    transformOrigin: "center",
                   }}
                 />
               )}
@@ -123,14 +152,29 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
         })}
       </div>
 
-      {/* Bottom connector strip */}
+      {/* Bottom connector strip — different jitter pattern than the top
+          so the two rows don't mirror each other. */}
       <div className="flex justify-around mt-1">
-        {config.slots.map((_, i) => (
-          <div
-            key={`bot-${i}`}
-            className="w-3 h-3 rounded-full pin-3d"
-          />
-        ))}
+        {config.slots.map((_, i) => {
+          const PIN_JITTER = [
+            { dx:  0.4, dy: -0.5, r:  9 },
+            { dx: -0.7, dy:  0.3, r: -5 },
+            { dx:  0.6, dy: -0.2, r:  2 },
+            { dx: -0.3, dy: -0.6, r: -11 },
+            { dx:  0.5, dy:  0.4, r:  4 },
+            { dx: -0.2, dy: -0.4, r:  7 },
+          ];
+          const j = PIN_JITTER[i % PIN_JITTER.length];
+          return (
+            <div
+              key={`bot-${i}`}
+              className="w-3 h-3 rounded-full pin-3d"
+              style={{
+                transform: `translate(${j.dx}px, ${j.dy}px) rotate(${j.r}deg)`,
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
