@@ -11,6 +11,7 @@
     "@tanstack/react-query": "^5.101.0",
     "@tanstack/react-router": "^1.170.15",
     "@tanstack/react-start": "^1.168.25",
+    "howler": "^2.2.4",
     "lucide-react": "^1.17.0",
     "nanoid": "^5.1.11",
     "react": "^19.2.7",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
     "@types/bun": "latest",
+    "@types/howler": "^2.2.13",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",

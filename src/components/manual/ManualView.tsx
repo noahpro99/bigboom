@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { generateManualPages } from "../../lib/generator";
 import type { ManualPage } from "../../lib/types";
 import { BookOpen, ChevronLeft, ChevronRight } from "lucide-react";
+import { play } from "../../lib/sound";
 
 interface ManualViewProps {
   seed: number;
@@ -38,6 +39,7 @@ export function ManualView({ seed }: ManualViewProps) {
     const cur = selectedIdxRef.current;
     if (target === cur || target < 0 || target >= pages.length) return;
     const side: "left" | "right" = target > cur ? "left" : "right";
+    play("pageTurn");
     setPhase({ kind: "exit", side, targetIdx: target });
   }
 

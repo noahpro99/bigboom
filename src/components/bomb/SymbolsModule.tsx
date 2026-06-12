@@ -1,5 +1,6 @@
 import { Check } from "lucide-react";
 import type { Module, SymbolsModuleConfig } from "../../lib/types";
+import { play } from "../../lib/sound";
 
 interface SymbolsModuleProps {
   module: Module;
@@ -100,7 +101,9 @@ export function SymbolsModule({
               key={sym.id}
               disabled={!isInteractable}
               onClick={() => {
-                if (isInteractable) onPress(sym.id);
+                if (!isInteractable) return;
+                play("symbolPress");
+                onPress(sym.id);
               }}
               className={`relative flex items-center justify-center w-full h-20 rounded-md select-none group ${
                 pressed ? "btn-3d btn-3d-armed btn-3d-press" : "btn-3d"

@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from "react";
 import { BatteryFull } from "lucide-react";
 import type { Module, ButtonModuleConfig } from "../../lib/types";
+import { play } from "../../lib/sound";
 
 const BUTTON_COLORS: Record<string, string> = {
   red: "#dc2626",
@@ -52,6 +53,7 @@ export function ButtonModule({
     pressStartRef.current = Date.now();
     holdTimerRef.current = window.setTimeout(() => {
       setLocalHolding(true);
+      play("buttonDown");
       onHoldStart();
     }, HOLD_THRESHOLD_MS);
   }
@@ -68,8 +70,10 @@ export function ButtonModule({
     pressStartRef.current = null;
 
     if (holding) {
+      play("buttonUp");
       onHoldRelease();
     } else if (heldFor < HOLD_THRESHOLD_MS) {
+      play("buttonUp");
       onTap();
     }
   }

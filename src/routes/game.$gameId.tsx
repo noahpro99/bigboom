@@ -11,7 +11,10 @@ import {
 } from "../server/game";
 import { BombView } from "../components/bomb/BombView";
 import { ManualView } from "../components/manual/ManualView";
+import { MuteButton } from "../components/MuteButton";
+import { SoundLayer } from "../components/SoundLayer";
 import { getSessionId } from "../lib/session";
+import { play, preloadAll } from "../lib/sound";
 import type { PlayerRole } from "../lib/types";
 import {
   Bomb,
@@ -86,6 +89,7 @@ function GamePage() {
 
   async function pickRole(target: PlayerRole) {
     if (target === playerRole || !sessionId) return;
+    play("menuButton");
     await switchRoleMut.mutateAsync({
       data: { gameId, sessionId, toRole: target },
     });
@@ -99,6 +103,7 @@ function GamePage() {
         : `/game/${gameId}`;
     try {
       await navigator.clipboard.writeText(inviteUrl);
+      play("menuButton");
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -110,6 +115,11 @@ function GamePage() {
     if (!sessionId) return;
     joinMut.mutate({ data: { gameId, sessionId } });
   }, [gameId, sessionId]);
+
+  // Warm the SFX cache once on mount so the first sound has no load latency.
+  useEffect(() => {
+    preloadAll();
+  }, []);
 
   useEffect(() => {
     if (gameState?.game.status !== "active") return;
@@ -174,6 +184,7 @@ function GamePage() {
       onCopy={copyInviteLink}
       onPick={pickRole}
       onStart={() => {
+        play("menuButton");
         setStartError(null);
         startMut.mutate({ data: { gameId } });
       }}
@@ -188,17 +199,28 @@ function GamePage() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden relative">
+      {/* Headless audio side-effect — fires for both roles */}
+      <SoundLayer gameState={gameState} />
+
       {playerRole === "defuser" ? (
         <BombView gameState={gameState} />
       ) : (
         <ManualView seed={game.seed} />
       )}
 
+      {/* Floating mute toggle */}
+      <div className="absolute top-2 right-2 z-30">
+        <MuteButton variant={playerRole === "defuser" ? "dark" : "light"} />
+      </div>
+
       {isOver && (
         <GameOverOverlay
           status={game.status}
           gameId={gameId}
-          onRestart={() => restartMut.mutate({ data: { gameId } })}
+          onRestart={() => {
+            play("menuButton");
+            restartMut.mutate({ data: { gameId } });
+          }}
           restartPending={restartMut.isPending}
           onHome={() => navigate({ to: "/" })}
         />

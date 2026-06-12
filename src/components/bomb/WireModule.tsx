@@ -1,5 +1,6 @@
 import { Scissors } from "lucide-react";
 import type { Module, WireModuleConfig } from "../../lib/types";
+import { play } from "../../lib/sound";
 
 const WIRE_COLORS: Record<string, string> = {
   red: "#ef4444",
@@ -79,7 +80,11 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
             <button
               key={i}
               disabled={!clickable}
-              onClick={() => clickable && onCut(i)}
+              onClick={() => {
+                if (!clickable) return;
+                play("wireSnip");
+                onCut(i);
+              }}
               className={`relative flex flex-col items-center justify-center group w-3 ${
                 isCut ? "wire-cut" : ""
               } ${clickable ? "cursor-pointer" : "cursor-default"}`}

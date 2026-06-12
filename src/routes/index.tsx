@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { createGame } from "../server/game";
 import { getSessionId } from "../lib/session";
+import { play, preloadAll } from "../lib/sound";
+import { MuteButton } from "../components/MuteButton";
 import { Bomb, ArrowRight, Link2, AlertTriangle } from "lucide-react";
 import { DiscordIcon } from "../components/icons/Discord";
 
@@ -31,7 +33,18 @@ function HomePage() {
   const [pasteError, setPasteError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // First user interaction unlocks audio on Safari/Chrome — preload then.
+  useEffect(() => {
+    const once = () => {
+      preloadAll();
+      window.removeEventListener("pointerdown", once);
+    };
+    window.addEventListener("pointerdown", once);
+    return () => window.removeEventListener("pointerdown", once);
+  }, []);
+
   async function handleCreate() {
+    play("menuButton");
     setLoading(true);
     try {
       const result = await createGame({
@@ -89,10 +102,11 @@ function HomePage() {
             <span className="w-1.5 h-1.5 rounded-full bg-phosphor pulse-dot" />
             <span>Defusal Protocol · ONLINE</span>
           </div>
-          <div className="hidden sm:flex items-center gap-4 opacity-70">
-            <span>RIA-2074</span>
-            <span className="opacity-50">//</span>
-            <span>Site 11 // Containment</span>
+          <div className="flex items-center gap-3 opacity-70">
+            <span className="hidden sm:inline">RIA-2074</span>
+            <span className="hidden sm:inline opacity-50">//</span>
+            <span className="hidden sm:inline">Site 11 // Containment</span>
+            <MuteButton variant="dark" className="opacity-100" />
           </div>
         </header>
 
