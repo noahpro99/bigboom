@@ -1,0 +1,152 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { WireModule } from "./WireModule";
+import { ButtonModule } from "./ButtonModule";
+import { Timer } from "./Timer";
+import {
+  cutWire,
+  tapButton,
+  startHold,
+  releaseHold,
+} from "../../server/game";
+import type { GameState, Module } from "../../lib/types";
+import { Skull, Wifi, Activity } from "lucide-react";
+
+interface BombViewProps {
+  gameState: GameState;
+}
+
+export function BombView({ gameState }: BombViewProps) {
+  const qc = useQueryClient();
+  const { game, modules, timeRemaining } = gameState;
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: ["game", game.id] });
+
+  const cutMut = useMutation({ mutationFn: cutWire, onSuccess: invalidate });
+  const tapMut = useMutation({ mutationFn: tapButton, onSuccess: invalidate });
+  const startMut = useMutation({ mutationFn: startHold, onSuccess: invalidate });
+  const releaseMut = useMutation({
+    mutationFn: releaseHold,
+    onSuccess: invalidate,
+  });
+
+  const disabled = game.status !== "active";
+
+  return (
+    <div className="h-full flex flex-col tx-grid relative">
+      <div className="absolute top-0 left-0 right-0 h-1.5 tx-stripes opacity-90 z-10" />
+      <div className="absolute bottom-0 left-0 right-0 h-1.5 tx-stripes opacity-90 z-10" />
+
+      {/* Chassis header */}
+      <div className="relative border-b border-rib bg-chassis/80 backdrop-blur-sm px-6 py-3 z-20">
+        <div className="flex items-center justify-between gap-4 max-w-6xl mx-auto">
+          {/* Left: serial sticker */}
+          <div className="flex items-center gap-3">
+            <div className="relative bg-amber/95 text-void px-3 py-1.5 font-stencil tracking-wider text-sm shadow-md transform -rotate-1">
+              <div className="text-[8px] uppercase tracking-[0.3em] leading-none mb-0.5 opacity-80">
+                Serial No.
+              </div>
+              <div className="font-mono font-black tracking-[0.18em] leading-tight">
+                {game.serial}
+              </div>
+            </div>
+            <div className="hidden sm:flex flex-col gap-1">
+              <span className="text-[9px] font-stencil tracking-[0.25em] text-bone-dim uppercase flex items-center gap-1">
+                <Wifi size={9} /> ROOM
+              </span>
+              <span className="font-mono text-xs text-bone tracking-widest">
+                {game.id}
+              </span>
+            </div>
+          </div>
+
+          {/* Center: timer */}
+          <Timer seconds={timeRemaining} status={game.status} />
+
+          {/* Right: strikes */}
+          <div className="flex flex-col items-end gap-1">
+            <span className="text-[9px] font-stencil tracking-[0.3em] text-bone-dim uppercase flex items-center gap-1">
+              <Skull size={10} /> STRIKES
+            </span>
+            <div className="flex items-center gap-1.5 border border-steel/50 px-2.5 py-1 bg-black/50">
+              {Array.from({ length: game.maxStrikes }).map((_, i) => {
+                const isHit = i < game.strikes;
+                return (
+                  <div
+                    key={i}
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      isHit
+                        ? "bg-crimson shadow-[0_0_8px_#e0245e]"
+                        : "bg-steel/70 border border-steel-light/30"
+                    }`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Mini status bar under header */}
+        <div className="max-w-6xl mx-auto mt-2 flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/70">
+          <div className="flex items-center gap-2">
+            <Activity size={10} className="text-phosphor" />
+            <span>Telemetry · Live</span>
+          </div>
+          <span>Defusal Bay · Unit 7</span>
+        </div>
+      </div>
+
+      {/* Bomb body — module grid */}
+      <div className="flex-1 overflow-auto px-6 py-8 relative">
+        <div className="max-w-3xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {modules.map((mod: Module) => {
+              if (mod.type === "wire") {
+                return (
+                  <WireModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onCut={(slotIndex) =>
+                      cutMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id, slotIndex },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === "button") {
+                return (
+                  <ButtonModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onTap={() =>
+                      tapMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id },
+                      })
+                    }
+                    onHoldStart={() =>
+                      startMut.mutate({ data: { moduleId: mod.id } })
+                    }
+                    onHoldRelease={() =>
+                      releaseMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id },
+                      })
+                    }
+                  />
+                );
+              }
+              return null;
+            })}
+          </div>
+
+          {/* Chassis footer plate */}
+          <div className="mt-10 border-t border-rib/50 pt-3 flex items-center justify-between text-[9px] font-mono uppercase tracking-[0.3em] text-bone-dim/60">
+            <span>ACME DEFUSAL DEVICE · MK-VII</span>
+            <span className="hidden sm:inline">DO NOT REMOVE THIS PANEL</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

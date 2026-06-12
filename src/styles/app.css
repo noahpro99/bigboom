@@ -1,0 +1,218 @@
+@import url("https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400;700;900&family=Big+Shoulders+Display:wght@700;900&family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+@import "tailwindcss";
+
+/* ----- Palette -----
+   Industrial defusal ops + classified field manual aesthetic. */
+@theme {
+  --color-void: #050a14;
+  --color-chassis: #0d1421;
+  --color-panel: #141d2e;
+  --color-rib: #1a2438;
+  --color-steel: #2a3441;
+  --color-steel-light: #4a5670;
+
+  --color-amber: #ff7a00;
+  --color-amber-glow: #ffaa3a;
+  --color-crimson: #e0245e;
+  --color-crimson-bright: #ff3868;
+  --color-phosphor: #00f5a0;
+  --color-cyan-rad: #00d4ff;
+
+  --color-bone: #f5f1e8;
+  --color-bone-dim: #a8a397;
+
+  --color-paper: #f0e6d2;
+  --color-paper-dim: #e3d6bb;
+  --color-paper-stain: #dccdab;
+  --color-ink: #0a1429;
+  --color-ink-mid: #2a3148;
+  --color-stamp: #a8312a;
+  --color-ledger: #0e6b3a;
+
+  --font-stencil: "Big Shoulders Stencil Display", "Impact", sans-serif;
+  --font-display: "Big Shoulders Display", "Impact", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-pmono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-serif: "IBM Plex Serif", Georgia, serif;
+}
+
+html, body {
+  font-family: var(--font-pmono);
+  font-feature-settings: "ss01", "ss02";
+}
+
+body {
+  background: var(--color-void);
+  color: var(--color-bone);
+}
+
+/* ----- Textures ----- */
+
+.tx-grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.08 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  mix-blend-mode: overlay;
+  opacity: 0.5;
+  z-index: 0;
+}
+
+.tx-grid {
+  background-color: var(--color-void);
+  background-image:
+    linear-gradient(rgba(80, 130, 200, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(80, 130, 200, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.tx-grid-fine {
+  background-image:
+    linear-gradient(rgba(80, 130, 200, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(80, 130, 200, 0.06) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.tx-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-amber) 0,
+    var(--color-amber) 12px,
+    #1a0e00 12px,
+    #1a0e00 24px
+  );
+}
+
+.tx-stripes-thin {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 122, 0, 0.5) 0,
+    rgba(255, 122, 0, 0.5) 4px,
+    transparent 4px,
+    transparent 12px
+  );
+}
+
+.tx-paper {
+  background-color: var(--color-paper);
+  background-image:
+    radial-gradient(ellipse at 20% 10%, rgba(168, 49, 42, 0.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 90%, rgba(14, 31, 58, 0.06) 0%, transparent 50%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.2 0 0 0 0 0.1 0 0 0 0 0 0 0 0 0.045 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+.tx-paper-lines {
+  background-image:
+    repeating-linear-gradient(
+      transparent,
+      transparent 31px,
+      rgba(14, 31, 58, 0.05) 32px
+    );
+}
+
+/* ----- Display helpers ----- */
+
+.font-stencil { font-family: var(--font-stencil); }
+.font-display { font-family: var(--font-display); }
+.font-mono    { font-family: var(--font-mono); }
+.font-pmono   { font-family: var(--font-pmono); }
+.font-serif   { font-family: var(--font-serif); }
+
+.led-timer {
+  font-family: var(--font-mono);
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  font-feature-settings: "tnum" 1;
+}
+
+.led-glow-green { color: #5fff7e; text-shadow: 0 0 8px #5fff7e, 0 0 18px rgba(95, 255, 126, 0.5); }
+.led-glow-amber { color: var(--color-amber-glow); text-shadow: 0 0 8px var(--color-amber-glow), 0 0 18px rgba(255, 170, 58, 0.6); }
+.led-glow-red   { color: #ff5050; text-shadow: 0 0 8px #ff5050, 0 0 18px rgba(255, 80, 80, 0.7); animation: blink 1s steps(2) infinite; }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.9); }
+}
+
+.stamp {
+  border: 3px solid currentColor;
+  padding: 4px 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-family: var(--font-stencil);
+  font-weight: 700;
+  display: inline-block;
+  transform: rotate(-2deg);
+  opacity: 0.92;
+}
+.stamp-sm { padding: 2px 8px; font-size: 0.7rem; }
+
+.bezel {
+  background: linear-gradient(180deg, #1c2840 0%, #0f1626 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(80, 100, 140, 0.15),
+    0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.screw {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #5a6478 0%, #2b3242 60%, #161a25 100%);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.45), 0 1px 1px rgba(255,255,255,0.05);
+}
+.screw::before, .screw::after {
+  content: ""; position: absolute; background: #0a0d14;
+  border-radius: 1px;
+}
+.screw::before { top: 1px; bottom: 1px; left: 4.5px; width: 1px; }
+.screw::after  { left: 1px; right: 1px; top: 4.5px; height: 1px; transform: rotate(35deg); }
+
+.wire-cut {
+  opacity: 0.28;
+  filter: blur(0.4px) saturate(0.6);
+}
+
+.btn-press {
+  transform: translateY(3px);
+}
+
+.led-strip {
+  animation: led-pulse 1.5s ease-in-out infinite;
+}
+@keyframes led-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.reveal {
+  animation: reveal 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.manual-card {
+  box-shadow:
+    0 1px 0 rgba(14, 31, 58, 0.08),
+    0 8px 24px rgba(14, 31, 58, 0.18),
+    inset 0 0 0 1px rgba(14, 31, 58, 0.06);
+}
+
+.tab-bookmark {
+  clip-path: polygon(0 0, 100% 0, 92% 50%, 100% 100%, 0 100%);
+}

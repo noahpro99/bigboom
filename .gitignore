@@ -1,0 +1,11 @@
+node_modules
+.output
+.vite
+.tanstack
+dist
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+.env
+.env.local
