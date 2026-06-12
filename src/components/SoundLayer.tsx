@@ -37,14 +37,20 @@ export function SoundLayer({ gameState }: SoundLayerProps) {
     lastTickRef.current = sec;
   }, [sec, game.status]);
 
-  // Explosion on a fresh transition into "lost".
+  // One-shot end-of-game sounds. Refs gate so we don't replay them across
+  // re-renders or if the player sits on the game-over overlay for a while.
   const playedExplosionRef = useRef(false);
+  const playedWinRef = useRef(false);
   useEffect(() => {
     if (game.status === "lost" && !playedExplosionRef.current) {
       playedExplosionRef.current = true;
       play("explosion");
-    } else if (game.status !== "lost") {
+    } else if (game.status === "won" && !playedWinRef.current) {
+      playedWinRef.current = true;
+      play("win");
+    } else if (game.status !== "lost" && game.status !== "won") {
       playedExplosionRef.current = false;
+      playedWinRef.current = false;
     }
   }, [game.status]);
 

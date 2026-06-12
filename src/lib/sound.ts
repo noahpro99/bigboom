@@ -10,7 +10,8 @@ export type SoundKey =
   | "wrongBuzzer"
   | "timerTick"
   | "timerCritical"
-  | "explosion";
+  | "explosion"
+  | "win";
 
 export type MusicKey = "menuMusic";
 
@@ -25,6 +26,7 @@ const FILES: Record<SoundKey, string> = {
   timerTick: "/sounds/countdown-beep.ogg",
   timerCritical: "/sounds/countdown-ending.ogg",
   explosion: "/sounds/explosion.ogg",
+  win: "/sounds/win.ogg",
 };
 
 const VOLUMES: Record<SoundKey, number> = {
@@ -38,6 +40,7 @@ const VOLUMES: Record<SoundKey, number> = {
   timerTick: 0.3,
   timerCritical: 0.55,
   explosion: 0.85,
+  win: 0.7,
 };
 
 const MUSIC_FILES: Record<MusicKey, string> = {
