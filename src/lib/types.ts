@@ -16,6 +16,161 @@ export type ModuleType =
   | "morse"
   | "password";
 
+export type Preset = "quick" | "standard" | "hardcore" | "custom";
+
+/* The configuration for a single bomb — selected by the host in the
+   lobby. Custom games are excluded from the global distribution / future
+   leaderboard since their buckets would be too fragmented to compare.
+   wire + button are always present (the basics); the rest can be toggled. */
+export interface GameConfig {
+  preset: Preset;
+  timerSeconds: number;
+  /* The module types that will be spawned, in the order they should
+     appear. Always begins with "wire" and "button". */
+  moduleTypes: ModuleType[];
+}
+
+export const ALL_OPTIONAL_MODULES: ModuleType[] = [
+  "symbols",
+  "simon",
+  "maze",
+  "memory",
+  "morse",
+  "password",
+];
+
+export const PRESET_CONFIGS: Record<
+  Exclude<Preset, "custom">,
+  GameConfig
+> = {
+  quick: {
+    preset: "quick",
+    timerSeconds: 180,
+    moduleTypes: ["wire", "button", "symbols", "simon"],
+  },
+  standard: {
+    preset: "standard",
+    timerSeconds: 300,
+    moduleTypes: ["wire", "button", "symbols", "simon", "memory", "morse"],
+  },
+  hardcore: {
+    preset: "hardcore",
+    timerSeconds: 480,
+    moduleTypes: [
+      "wire",
+      "button",
+      "symbols",
+      "simon",
+      "maze",
+      "memory",
+      "morse",
+      "password",
+    ],
+  },
+};
+
+/* Canonical signature including instance counts: type repeated N times
+   if the bomb has N of it. Sorted by type name then joined — so two
+   configs with the same per-type counts always produce the same key,
+   regardless of the order the host toggled things on. Used both as the
+   stored module_set value on game_results and as the preset-detection
+   key. */
+export function canonicalModuleSet(types: ModuleType[]): string {
+  return [...types].sort().join(",");
+}
+
+export const MAX_INSTANCES_PER_TYPE = 3;
+
+/* Compute which named preset (if any) a config matches. Used to stamp
+   `preset` on game_results — any deviation from the three presets is
+   "custom" and excluded from histograms. Counts matter: 2 symbols
+   modules counts as a different shape than 1 even with the same set
+   of types. */
+export function detectPreset(config: {
+  timerSeconds: number;
+  moduleTypes: ModuleType[];
+}): Preset {
+  const canon = canonicalModuleSet(config.moduleTypes);
+  for (const name of ["quick", "standard", "hardcore"] as const) {
+    const p = PRESET_CONFIGS[name];
+    if (
+      p.timerSeconds === config.timerSeconds &&
+      canonicalModuleSet(p.moduleTypes) === canon
+    ) {
+      return name;
+    }
+  }
+  return "custom";
+}
+
+/* Build a moduleTypes array from a (type → count) map, expanding into
+   the canonical type order. */
+export function moduleTypesFromCounts(
+  counts: Partial<Record<ModuleType, number>>
+): ModuleType[] {
+  const order: ModuleType[] = [
+    "wire",
+    "button",
+    "symbols",
+    "simon",
+    "maze",
+    "memory",
+    "morse",
+    "password",
+  ];
+  const out: ModuleType[] = [];
+  for (const t of order) {
+    const n = Math.max(0, Math.min(MAX_INSTANCES_PER_TYPE, counts[t] ?? 0));
+    for (let i = 0; i < n; i++) out.push(t);
+  }
+  return out;
+}
+
+/* Inverse — used by the lobby UI to render +/- count pickers. */
+export function moduleCounts(
+  types: ModuleType[]
+): Record<ModuleType, number> {
+  const out: Record<ModuleType, number> = {
+    wire: 0,
+    button: 0,
+    symbols: 0,
+    simon: 0,
+    maze: 0,
+    memory: 0,
+    morse: 0,
+    password: 0,
+  };
+  for (const t of types) out[t]++;
+  return out;
+}
+
+/* Rough seconds-per-instance budget per module. Calibrated against the
+   three named presets: Quick (4 mods) → ~3min, Standard (6) → ~5min,
+   Hardcore (8) → ~8min. Used by the lobby Advanced UI to auto-suggest
+   a timer whenever the module list changes; the host can still drag
+   the slider to override afterwards. */
+const PER_MODULE_SECONDS: Record<ModuleType, number> = {
+  wire: 25,
+  button: 30,
+  symbols: 50,
+  simon: 60,
+  maze: 70,
+  memory: 65,
+  morse: 55,
+  password: 50,
+};
+const TIMER_BASELINE_SECONDS = 30;
+
+/* Recommended timer for a given module list, clamped to the slider's
+   valid range and rounded to the slider's 30s step so the suggested
+   value lines up exactly with a tick. */
+export function estimateTimerSeconds(types: ModuleType[]): number {
+  let total = TIMER_BASELINE_SECONDS;
+  for (const t of types) total += PER_MODULE_SECONDS[t] ?? 30;
+  const rounded = Math.round(total / 30) * 30;
+  return Math.max(60, Math.min(900, rounded));
+}
+
 // A slot is a position on the wire module. It either holds a coloured wire or
 // is empty. Slots count from position 1 at the top.
 export type Slot = { color: WireColor } | null;
@@ -147,12 +302,24 @@ export interface MazeCell {
 
 export interface MazeData {
   // Flat array of length MAZE_SIZE*MAZE_SIZE — walls for cell (x,y) at
-  // index y*MAZE_SIZE + x. Walls packed via MAZE_W_* bits.
+  // index y*MAZE_SIZE + x. Walls packed via MAZE_W_* bits. This is the
+  // full ground truth; rendering filters by player ownership below.
   walls: number[];
+  // Per-cell mask of which walls the DEFUSER sees on the bomb (~33%
+  // of present walls). Stored as the same MAZE_W_* bit packing as
+  // `walls`; render with `(walls[i] & defuserWalls[i])`. The Expert
+  // sees the remaining walls in the manual: `walls[i] & ~defuserWalls[i]`.
+  // For each shared edge both adjacent cells' bits are set consistently,
+  // so the edge belongs to exactly one player.
+  defuserWalls: number[];
   // Two cells with green identification markers — uniquely identify this
   // maze in the manual's pool.
   markers: [MazeCell, MazeCell];
 }
+
+/* Fraction of present walls assigned to the defuser; the remainder go
+   to the expert. ~33% / ~67%. */
+export const MAZE_DEFUSER_WALL_FRACTION = 1 / 3;
 
 export interface MazeModuleConfig {
   // The whole pool. The expert finds the maze whose `markers` match
@@ -178,12 +345,18 @@ export interface MazeModuleConfig {
 export const PASSWORD_COLS = 5;
 export const PASSWORD_LETTERS_PER_COL = 6;
 
+export const PASSWORD_DICT_SIZE = 8;
+
 export interface PasswordModuleConfig {
   /* Per-column letter pool, uppercase. Length PASSWORD_LETTERS_PER_COL. */
   columns: string[][];
-  /* Words from the per-bomb dictionary that can actually be spelled
-     from `columns` (uppercase). The defuser sees no list — this is
-     surfaced only on the manual. Server accepts any of these. */
+  /* The per-bomb dictionary the Expert sees — PASSWORD_DICT_SIZE words
+     randomly sampled from the master pool. Always includes the target
+     plus PASSWORD_DICT_SIZE-1 random decoys. */
+  dictionary: string[];
+  /* Subset of `dictionary` that can actually be spelled from `columns`
+     — the Expert spots this by checking each word against the pools.
+     Server accepts any of these on SUBMIT. */
   acceptedWords: string[];
 }
 
@@ -241,8 +414,10 @@ export interface MemoryStageConfig {
   labels: number[];
   /* The number shown on the display this stage. */
   display: number;
-  /* The rule to apply this stage. */
-  rule: MemoryRule;
+  /* One rule per possible display value (1..4). The active rule for the
+     stage is rulesByDisplay[display - 1]. The manual surfaces all four
+     so the player can look up whatever display happens to appear. */
+  rulesByDisplay: MemoryRule[];
 }
 
 export interface MemoryModuleConfig {
@@ -298,6 +473,12 @@ export interface Game {
   strikes: number;
   maxStrikes: number;
   createdAt: number;
+  /* The host's configuration choice. preset+moduleTypes determine which
+     modules spawn on createGame/restartGame; surfaced here so the lobby
+     can show + edit it pre-start, and so the GameOver overlay can fetch
+     the right distribution bucket. */
+  preset: Preset;
+  moduleTypes: ModuleType[];
 }
 
 export interface GameState {
@@ -327,5 +508,6 @@ export type ManualContent =
   | { type: "simonTable"; tables: Array<Record<SimonColor, SimonColor>> }
   | { type: "mazeGrid"; pool: MazeData[] }
   | { type: "memoryStages"; stages: MemoryStageConfig[] }
+  | { type: "morseAlphabet" }
   | { type: "morseTable"; pool: MorseEntry[] }
-  | { type: "passwordDict"; words: string[]; columns: string[][] };
+  | { type: "passwordDict"; words: string[] };

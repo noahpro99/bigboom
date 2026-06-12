@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   generateManualPages,
   memoryRuleText,
-  encodeMorse,
 } from "../../lib/generator";
 import type {
   ManualPage,
@@ -10,6 +9,7 @@ import type {
   MazeData,
   MemoryStageConfig,
   MorseEntry,
+  ModuleType,
 } from "../../lib/types";
 import { MORSE_FREQS } from "../../lib/types";
 import {
@@ -25,6 +25,10 @@ import { ProfileButton } from "../ProfileButton";
 
 interface ManualViewProps {
   seed: number;
+  /* Which module types the bomb actually has. The manual filters its
+     pages to match so the Expert isn't reading rules for modules that
+     aren't on the bomb. Duplicate types collapse to a single page. */
+  moduleTypes?: ModuleType[];
 }
 
 // Phase machine: idle → exit (current page slides out) → enter (next page
@@ -35,8 +39,8 @@ type Phase =
   | { kind: "exit"; side: "left" | "right"; targetIdx: number }
   | { kind: "enter"; side: "left" | "right" };
 
-export function ManualView({ seed }: ManualViewProps) {
-  const pages = generateManualPages(seed);
+export function ManualView({ seed, moduleTypes }: ManualViewProps) {
+  const pages = generateManualPages(seed, moduleTypes);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
 
@@ -429,69 +433,65 @@ function SimonTableBlock({
   );
 }
 
-/* Render a single maze from the pool — walls drawn as ink lines, the
-   two identification markers drawn as filled green dots. Player matches
-   green dots to the bomb display. */
+/* Render a single maze from the pool — only the EXPERT'S share of walls
+   (the complement of the defuser's mask). The defuser sees the rest on
+   the bomb; the two players coordinate to reconstruct the full maze.
+   Markers are always drawn on both sides (they're how the maze is
+   identified, not part of the wall puzzle). */
 function MazeOne({ maze }: { maze: MazeData }) {
   const CELL = 22;
   const PAD = 2;
   const size = MAZE_SIZE * CELL + PAD * 2;
   const lines: React.ReactNode[] = [];
 
-  // Outer border — always present.
-  lines.push(
-    <rect
-      key="border"
-      x={PAD}
-      y={PAD}
-      width={MAZE_SIZE * CELL}
-      height={MAZE_SIZE * CELL}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-    />
-  );
+  /* Faint cell grid — every cell border in ink/15 so the player can
+     read the maze as a 6×6 board even where neither side owns the wall.
+     Drawn first so wall ink overdraws it. */
+  for (let i = 0; i <= MAZE_SIZE; i++) {
+    const off = PAD + i * CELL;
+    lines.push(
+      <line key={`g-h-${i}`} x1={PAD} y1={off} x2={PAD + MAZE_SIZE * CELL} y2={off} stroke="currentColor" strokeOpacity="0.18" strokeWidth="0.6" />
+    );
+    lines.push(
+      <line key={`g-v-${i}`} x1={off} y1={PAD} x2={off} y2={PAD + MAZE_SIZE * CELL} stroke="currentColor" strokeOpacity="0.18" strokeWidth="0.6" />
+    );
+  }
 
-  // Internal walls. To avoid drawing each wall twice (cells share walls),
-  // only render N (top) and W (left) walls — except for the outer edges
-  // which the border already covers.
   for (let y = 0; y < MAZE_SIZE; y++) {
     for (let x = 0; x < MAZE_SIZE; x++) {
-      const w = maze.walls[y * MAZE_SIZE + x];
+      const idx = y * MAZE_SIZE + x;
+      const w = maze.walls[idx];
+      const d = maze.defuserWalls[idx];
+      /* Expert sees present walls NOT in the defuser's mask. */
+      const expert = w & ~d;
       const x0 = PAD + x * CELL;
       const y0 = PAD + y * CELL;
-      if (y > 0 && w & MAZE_W_N) {
+      const x1 = x0 + CELL;
+      const y1 = y0 + CELL;
+
+      if (expert & MAZE_W_N) {
         lines.push(
-          <line
-            key={`n-${x}-${y}`}
-            x1={x0}
-            y1={y0}
-            x2={x0 + CELL}
-            y2={y0}
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="square"
-          />
+          <line key={`n-${x}-${y}`} x1={x0} y1={y0} x2={x1} y2={y0} stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" />
         );
       }
-      if (x > 0 && w & MAZE_W_W) {
+      if (expert & MAZE_W_W) {
         lines.push(
-          <line
-            key={`w-${x}-${y}`}
-            x1={x0}
-            y1={y0}
-            x2={x0}
-            y2={y0 + CELL}
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="square"
-          />
+          <line key={`w-${x}-${y}`} x1={x0} y1={y0} x2={x0} y2={y1} stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" />
+        );
+      }
+      if (y === MAZE_SIZE - 1 && expert & MAZE_W_S) {
+        lines.push(
+          <line key={`s-${x}-${y}`} x1={x0} y1={y1} x2={x1} y2={y1} stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" />
+        );
+      }
+      if (x === MAZE_SIZE - 1 && expert & MAZE_W_E) {
+        lines.push(
+          <line key={`e-${x}-${y}`} x1={x1} y1={y0} x2={x1} y2={y1} stroke="currentColor" strokeWidth="1.5" strokeLinecap="square" />
         );
       }
     }
   }
 
-  // Marker dots — drawn over the grid.
   const markers = maze.markers.map((m, i) => (
     <circle
       key={`mk-${i}`}
@@ -537,108 +537,117 @@ function MemoryStagesBlock({ stages }: { stages: MemoryStageConfig[] }) {
   return (
     <div className="mb-5">
       {stages.map((stage, i) => (
-        <p
-          key={i}
-          className="font-serif text-[14px] sm:text-[15px] leading-relaxed mb-2 text-ink/90 pl-12 -indent-12"
-        >
-          <span className="font-stencil text-stamp text-base tracking-[0.15em] mr-2">
-            Stage {i + 1}.
-          </span>
-          <span className="italic text-ink/65">Display shows</span>{" "}
-          <span className="font-bold ink-text-bold">{stage.display}</span>
-          {" — "}
-          {memoryRuleText(stage.rule)}.
-        </p>
+        <div key={i} className="mb-4">
+          <p className="font-stencil text-stamp text-base tracking-[0.15em] mb-1">
+            Stage {i + 1}
+          </p>
+          <table className="w-full border-collapse font-serif text-[13px] sm:text-[14px] ink-text">
+            <thead>
+              <tr>
+                <th className="text-left font-bold text-[10px] uppercase tracking-[0.18em] pb-1 pr-3 border-b-[1.2px] border-ink/85 ink-text-bold w-[5rem] whitespace-nowrap">
+                  Display
+                </th>
+                <th className="text-left font-bold text-[10px] uppercase tracking-[0.18em] pb-1 pl-1 border-b-[1.2px] border-ink/85 ink-text-bold">
+                  Action
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {stage.rulesByDisplay.map((rule, d) => (
+                <tr
+                  key={d}
+                  className="border-b border-ink/20 last:border-b-0"
+                >
+                  <td className="align-top py-1 pr-3 font-stencil text-stamp text-base">
+                    {d + 1}
+                  </td>
+                  <td className="align-top py-1 pl-1 leading-snug">
+                    {memoryRuleText(rule)}.
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ))}
     </div>
   );
 }
 
-/* Morse pool — laid out as a two-column printed list. Each entry is
-   one paragraph: bold serif word, the Morse encoding in monospace,
-   leader dots, then the frequency in bold. No grid lines, no card. */
-function MorseTableBlock({ pool }: { pool: MorseEntry[] }) {
+/* Morse alphabet — A-Z printed as a compact reference table the Expert
+   decodes the flashing/audible word against. Static, no per-bomb
+   data. */
+const MORSE_ALPHA: Array<[string, string]> = [
+  ["A", ".-"],   ["B", "-..."], ["C", "-.-."], ["D", "-.."],
+  ["E", "."],    ["F", "..-."], ["G", "--."],  ["H", "...."],
+  ["I", ".."],   ["J", ".---"], ["K", "-.-"],  ["L", ".-.."],
+  ["M", "--"],   ["N", "-."],   ["O", "---"],  ["P", ".--."],
+  ["Q", "--.-"], ["R", ".-."],  ["S", "..."],  ["T", "-"],
+  ["U", "..-"],  ["V", "...-"], ["W", ".--"],  ["X", "-..-"],
+  ["Y", "-.--"], ["Z", "--.."],
+];
+
+function MorseAlphabetBlock() {
   return (
-    <div className="mb-5 columns-1 sm:columns-2 gap-x-6">
-      {pool.map((entry) => {
-        const morse = encodeMorse(entry.word).join("  ");
-        return (
+    <div className="mb-5">
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-x-4 gap-y-1 font-serif text-[13px] ink-text">
+        {MORSE_ALPHA.map(([ch, code]) => (
           <div
-            key={entry.word}
-            className="font-serif text-[13px] leading-snug mb-2 break-inside-avoid"
+            key={ch}
+            className="flex items-baseline gap-2 leading-snug"
           >
-            <div className="font-bold ink-text-bold tracking-wide flex items-baseline gap-2">
-              <span>{entry.word}</span>
-              <span className="ink-leader" aria-hidden />
-              <span className="font-mono font-bold text-ink/90">
-                {MORSE_FREQS[entry.freqIndex].toFixed(3)}
-              </span>
-            </div>
-            <div className="font-mono text-[11px] text-ink/65 tracking-tight pl-1">
-              {morse}
-            </div>
+            <span className="font-bold ink-text-bold w-3">{ch}</span>
+            <span className="font-mono text-ink/85 tracking-wide">{code}</span>
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }
 
-/* Password — letter pools rendered as a typeset header (column number
-   in italic above each stack of letters), and the dictionary as a
-   flowing column of small-caps words like a glossary index. */
-function PasswordDictBlock({
-  words,
-  columns,
-}: {
-  words: string[];
-  columns: string[][];
-}) {
+/* Word ↔ response frequency. Manual no longer shows the per-word morse
+   encoding (Expert decodes via the alphabet table above), just the word
+   and its MHz response. */
+function MorseTableBlock({ pool }: { pool: MorseEntry[] }) {
+  return (
+    <div className="mb-5 columns-1 sm:columns-2 gap-x-6">
+      {pool.map((entry) => (
+        <div
+          key={entry.word}
+          className="font-serif text-[14px] leading-snug mb-1.5 break-inside-avoid flex items-baseline gap-2"
+        >
+          <span className="font-bold ink-text-bold tracking-wide">
+            {entry.word}
+          </span>
+          <span className="ink-leader" aria-hidden />
+          <span className="font-mono font-bold text-ink/90 whitespace-nowrap">
+            {MORSE_FREQS[entry.freqIndex].toFixed(3)} MHz
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Password candidate list — the expert sees only the words, never the
+   letter pools (which live on the defuser's dials). Reading each
+   candidate aloud and confirming letter-by-letter is the point: it
+   forces back-and-forth instead of letting the expert solve in their
+   head. */
+function PasswordDictBlock({ words }: { words: string[] }) {
   return (
     <div className="mb-5">
-      {/* Letter pools — 5 columns of letters, each headed with a roman
-         numeral. Aligned via a real <table> so the columns stay even. */}
-      <table className="mb-4 mx-auto border-collapse font-serif">
-        <thead>
-          <tr>
-            {columns.map((_, i) => (
-              <th
-                key={i}
-                className="px-3 sm:px-5 pb-1 font-serif italic text-[11px] text-ink/55 align-bottom border-b-[1.2px] border-ink/80"
-              >
-                col. {["I", "II", "III", "IV", "V"][i]}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Array.from({ length: 6 }).map((_, row) => (
-            <tr key={row}>
-              {columns.map((col, ci) => (
-                <td
-                  key={ci}
-                  className="px-3 sm:px-5 py-0.5 text-center font-stencil text-[20px] leading-tight ink-text-bold"
-                >
-                  {col[row]}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <div className="ink-divider">❦</div>
-
-      <div className="font-serif italic text-[12px] text-ink/65 mb-2">
-        Dictionary — only words spellable from the pools above are valid.
+      <div className="font-serif italic text-[12px] text-ink/65 mb-1">
+        Try each in turn — at least one will fit the defuser's dials.
       </div>
-      <div className="columns-3 sm:columns-4 gap-x-4 font-serif text-[13px] tracking-wide ink-text">
+      <ul className="font-stencil text-[20px] tracking-[0.15em] ink-text-bold leading-relaxed pl-1 columns-1 sm:columns-2 gap-x-6">
         {words.map((w) => (
-          <div key={w} className="leading-relaxed">
-            {w}
-          </div>
+          <li key={w} className="flex items-baseline gap-2 break-inside-avoid">
+            <span className="text-stamp text-base">▸</span>
+            <span>{w}</span>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -745,6 +754,10 @@ function ManualPageView({ page, index, total }: { page: ManualPage; index: numbe
 
             if (block.type === 'memoryStages') {
               return <MemoryStagesBlock key={bi} stages={block.stages} />;
+            }
+
+            if (block.type === 'morseAlphabet') {
+              return <MorseAlphabetBlock key={bi} />;
             }
 
             if (block.type === 'morseTable') {

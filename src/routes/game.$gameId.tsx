@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -8,6 +8,9 @@ import {
   checkTimer,
   restartGame,
   switchRole,
+  updateGameConfig,
+  getPresetDistribution,
+  getGameResult,
 } from "../server/game";
 import { BombView } from "../components/bomb/BombView";
 import { ManualView } from "../components/manual/ManualView";
@@ -15,7 +18,19 @@ import { ProfileButton } from "../components/ProfileButton";
 import { SoundLayer } from "../components/SoundLayer";
 import { getSessionId } from "../lib/session";
 import { play, preloadAll, playMusic, stopMusic } from "../lib/sound";
-import type { PlayerRole } from "../lib/types";
+import type {
+  ModuleType,
+  PlayerRole,
+  Preset,
+} from "../lib/types";
+import {
+  ALL_OPTIONAL_MODULES,
+  MAX_INSTANCES_PER_TYPE,
+  PRESET_CONFIGS,
+  estimateTimerSeconds,
+  moduleCounts,
+  moduleTypesFromCounts,
+} from "../lib/types";
 import {
   Bomb,
   BookOpen,
@@ -84,6 +99,11 @@ function GamePage() {
 
   const switchRoleMut = useMutation({
     mutationFn: switchRole,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["game", gameId] }),
+  });
+
+  const updateConfigMut = useMutation({
+    mutationFn: updateGameConfig,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["game", gameId] }),
   });
 
@@ -192,6 +212,13 @@ function GamePage() {
       hasExpert={hasExpert}
       bothPresent={bothPresent}
       copied={copied}
+      preset={game.preset}
+      timerSeconds={game.timerSeconds}
+      moduleTypes={game.moduleTypes}
+      onConfigChange={(next) =>
+        updateConfigMut.mutate({ data: { gameId, ...next } })
+      }
+      configPending={updateConfigMut.isPending}
       onCopy={copyInviteLink}
       onPick={pickRole}
       onStart={() => {
@@ -216,13 +243,14 @@ function GamePage() {
       {playerRole === "defuser" ? (
         <BombView gameState={gameState} />
       ) : (
-        <ManualView seed={game.seed} />
+        <ManualView seed={game.seed} moduleTypes={game.moduleTypes} />
       )}
 
       {isOver && (
         <GameOverOverlay
           status={game.status}
           gameId={gameId}
+          preset={game.preset}
           onRestart={() => {
             play("menuButton");
             restartMut.mutate({ data: { gameId } });
@@ -235,6 +263,260 @@ function GamePage() {
   );
 }
 
+/* Preset selector + collapsed Advanced drawer for the lobby. Sends the
+   updated config up via onChange; the server is the source of truth and
+   the next getGameState poll will sync any other tab in the room. */
+const PRESET_META: Array<{
+  preset: Exclude<Preset, "custom">;
+  label: string;
+  sub: string;
+  Icon: typeof Bomb;
+}> = [
+  { preset: "quick", label: "Quick", sub: "3 min · 4 modules", Icon: Loader2 },
+  { preset: "standard", label: "Standard", sub: "5 min · 6 modules", Icon: Bomb },
+  { preset: "hardcore", label: "Hardcore", sub: "8 min · all 8", Icon: Skull },
+];
+
+const MODULE_META: Record<ModuleType, { label: string; sub: string }> = {
+  wire: { label: "Wires", sub: "MOD-A" },
+  button: { label: "Button", sub: "MOD-B" },
+  symbols: { label: "Symbols", sub: "MOD-S" },
+  simon: { label: "Simon", sub: "MOD-Σ" },
+  maze: { label: "Maze", sub: "MOD-M" },
+  memory: { label: "Memory", sub: "MOD-R" },
+  morse: { label: "Morse", sub: "MOD-T" },
+  password: { label: "Password", sub: "MOD-P" },
+};
+
+function ConfigSection({
+  preset,
+  timerSeconds,
+  moduleTypes,
+  onChange,
+  pending,
+}: {
+  preset: Preset;
+  timerSeconds: number;
+  moduleTypes: ModuleType[];
+  onChange: (next: {
+    preset?: Preset;
+    timerSeconds?: number;
+    moduleTypes?: ModuleType[];
+  }) => void;
+  pending: boolean;
+}) {
+  const [advancedOpen, setAdvancedOpen] = useState(preset === "custom");
+  const counts = moduleCounts(moduleTypes);
+
+  const [localTimer, setLocalTimer] = useState(timerSeconds);
+  const draggingRef = useRef(false);
+  useEffect(() => {
+    if (!draggingRef.current) setLocalTimer(timerSeconds);
+  }, [timerSeconds]);
+
+  function pickPreset(p: Exclude<Preset, "custom">) {
+    if (preset === p) return;
+    play("menuButton");
+    onChange({ preset: p });
+  }
+
+  function bumpModule(t: ModuleType, delta: number) {
+    const cur = counts[t];
+    const next = Math.max(0, Math.min(MAX_INSTANCES_PER_TYPE, cur + delta));
+    if (next === cur) return;
+    play("menuButton");
+    const nextCounts = { ...counts, [t]: next };
+    const nextTypes = moduleTypesFromCounts(nextCounts);
+    /* Module changes auto-suggest a fitting timer so the host doesn't
+       have to remember to retune it. The slider remains the final
+       authority — if they adjust it afterwards, that's their answer. */
+    onChange({
+      timerSeconds: estimateTimerSeconds(nextTypes),
+      moduleTypes: nextTypes,
+    });
+  }
+
+  function commitTimer(value: number) {
+    if (value === timerSeconds) return;
+    onChange({ timerSeconds: value, moduleTypes });
+  }
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-3">
+        <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
+          Bomb Configuration
+        </span>
+        {pending && (
+          <span className="text-[9px] font-mono uppercase tracking-[0.25em] text-amber/80 flex items-center gap-1">
+            <Loader2 size={10} className="animate-spin" /> Updating
+          </span>
+        )}
+      </div>
+
+      {/* Preset row — three radio-style chassis tiles. */}
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        {PRESET_META.map((p) => {
+          const active = preset === p.preset;
+          return (
+            <button
+              key={p.preset}
+              disabled={pending}
+              onClick={() => pickPreset(p.preset)}
+              className={`relative px-2 py-2 border transition-all text-left disabled:opacity-60 ${
+                active
+                  ? "border-amber/60 bg-amber/8"
+                  : "border-rib hover:border-steel-light"
+              }`}
+            >
+              <div
+                className={`font-stencil text-sm tracking-wider uppercase ${
+                  active ? "text-amber-glow" : "text-bone-dim"
+                }`}
+              >
+                {p.label}
+              </div>
+              <div className="text-[9px] font-mono uppercase tracking-[0.18em] text-bone-dim/60 leading-tight">
+                {p.sub}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {preset === "custom" && (
+        <div className="mb-3 flex items-center gap-2 border border-amber/40 bg-amber/8 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.22em] text-amber/90">
+          <AlertTriangle size={11} />
+          <span>Custom — not counted in stats.</span>
+        </div>
+      )}
+
+      {/* Advanced drawer */}
+      <button
+        onClick={() => {
+          play("menuButton");
+          setAdvancedOpen((v) => !v);
+        }}
+        className="w-full text-left text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim hover:text-bone transition-colors flex items-center gap-1.5"
+      >
+        <span>{advancedOpen ? "▾" : "▸"}</span>
+        Advanced
+      </button>
+      {advancedOpen && (
+        <div className="mt-3 space-y-4 border-t border-rib/60 pt-3">
+          {/* Timer slider — module changes pre-fill an estimate; drag
+              from there to fine-tune. To re-snap to the auto value,
+              bump any module count and back. */}
+          <div>
+            <div className="flex items-baseline justify-between mb-1">
+              <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
+                Timer
+              </span>
+              <span className="font-mono text-xs text-amber tabular-nums">
+                {Math.floor(localTimer / 60)}m{" "}
+                {String(localTimer % 60).padStart(2, "0")}s
+              </span>
+            </div>
+            <input
+              type="range"
+              min={60}
+              max={900}
+              step={30}
+              value={localTimer}
+              disabled={pending}
+              onChange={(e) => setLocalTimer(Number(e.currentTarget.value))}
+              onPointerDown={() => {
+                draggingRef.current = true;
+              }}
+              onPointerUp={() => {
+                draggingRef.current = false;
+                commitTimer(localTimer);
+              }}
+              onPointerCancel={() => {
+                draggingRef.current = false;
+              }}
+              onKeyUp={() => commitTimer(localTimer)}
+              className="bigboom-slider w-full"
+              aria-label="Timer in seconds"
+            />
+          </div>
+
+          {/* Module counts — +/- picker per type. Wire & button are
+              core (min 1), the rest start at 0. Anything above 1 is
+              a "multi-instance" bomb — each module type still gets a
+              single manual page. */}
+          <div>
+            <div className="flex items-baseline justify-between mb-2">
+              <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
+                Modules
+              </span>
+              <span className="text-[9px] font-mono uppercase tracking-[0.22em] text-bone-dim/55">
+                count
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {(["wire", "button", ...ALL_OPTIONAL_MODULES] as ModuleType[]).map(
+                (t) => {
+                  const meta = MODULE_META[t];
+                  const count = counts[t];
+                  const enabled = count > 0;
+                  return (
+                    <div
+                      key={t}
+                      className={`px-2.5 py-1.5 border flex items-center justify-between gap-2 ${
+                        enabled
+                          ? "border-phosphor/45 bg-phosphor/8"
+                          : "border-rib"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div
+                          className={`font-stencil text-sm tracking-wide uppercase truncate ${
+                            enabled ? "text-phosphor" : "text-bone-dim"
+                          }`}
+                        >
+                          {meta.label}
+                        </div>
+                        <div className="text-[8px] font-mono uppercase tracking-[0.22em] text-bone-dim/55">
+                          {meta.sub}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => bumpModule(t, -1)}
+                          disabled={pending || count <= 0}
+                          className="w-6 h-6 border border-rib bg-void/40 text-bone-dim hover:text-bone hover:border-steel-light disabled:opacity-30 flex items-center justify-center font-mono"
+                          aria-label={`Decrease ${meta.label}`}
+                        >
+                          −
+                        </button>
+                        <span
+                          className={`min-w-[1.5ch] text-center font-stencil text-base ${
+                            enabled ? "text-phosphor" : "text-bone-dim/60"
+                          }`}
+                        >
+                          {count}
+                        </span>
+                        <button
+                          onClick={() => bumpModule(t, 1)}
+                          disabled={pending || count >= MAX_INSTANCES_PER_TYPE}
+                          className="w-6 h-6 border border-rib bg-void/40 text-bone-dim hover:text-bone hover:border-steel-light disabled:opacity-30 flex items-center justify-center font-mono"
+                          aria-label={`Increase ${meta.label}`}
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface LobbyViewProps {
   gameId: string;
   playerRole: PlayerRole;
@@ -242,6 +524,15 @@ interface LobbyViewProps {
   hasExpert: boolean;
   bothPresent: boolean;
   copied: boolean;
+  preset: Preset;
+  timerSeconds: number;
+  moduleTypes: ModuleType[];
+  onConfigChange: (next: {
+    preset?: Preset;
+    timerSeconds?: number;
+    moduleTypes?: ModuleType[];
+  }) => void;
+  configPending: boolean;
   onCopy: () => void;
   onPick: (r: PlayerRole) => void;
   onStart: () => void;
@@ -258,6 +549,11 @@ function LobbyView({
   hasExpert,
   bothPresent,
   copied,
+  preset,
+  timerSeconds,
+  moduleTypes,
+  onConfigChange,
+  configPending,
   onCopy,
   onPick,
   onStart,
@@ -405,6 +701,17 @@ function LobbyView({
             </div>
           </div>
 
+          {/* Config — preset selector + Advanced drawer */}
+          <div className="p-5 border-b border-rib/60">
+            <ConfigSection
+              preset={preset}
+              timerSeconds={timerSeconds}
+              moduleTypes={moduleTypes}
+              onChange={onConfigChange}
+              pending={configPending}
+            />
+          </div>
+
           {/* Notice */}
           <div className="p-5 border-b border-rib/60 text-[11px] font-mono text-bone-dim/80 leading-relaxed">
             Talk to your partner over voice — Discord, phone, or in person. The game has no in-game chat: the Defuser describes the bomb, the Expert reads the manual aloud.
@@ -412,39 +719,47 @@ function LobbyView({
 
           {/* Start */}
           <div className="p-5">
-            <button
-              onClick={onStart}
-              disabled={!bothPresent || startPending}
-              className={`w-full px-6 py-4 font-stencil text-xl uppercase tracking-[0.2em] transition-all flex items-center justify-between ${
-                bothPresent && !startPending
-                  ? "bg-crimson hover:bg-crimson-bright text-bone cursor-pointer"
-                  : "bg-steel/40 text-bone-dim/50"
-              }`}
-            >
-              <span className="flex items-center gap-3">
-                {startPending ? (
-                  <Loader2 size={20} className="animate-spin" />
-                ) : (
-                  <Bomb size={22} strokeWidth={2.5} />
-                )}
-                <span>
-                  {startPending
-                    ? "Arming…"
-                    : bothPresent
-                    ? "Arm The Bomb"
-                    : "Need 1 of each role"}
-                </span>
-              </span>
-              {bothPresent && !startPending && (
-                <ArrowRight size={20} strokeWidth={2.5} />
-              )}
-            </button>
-            {startError && (
-              <p className="mt-3 text-crimson font-mono text-xs uppercase tracking-[0.18em] flex items-center gap-2">
-                <AlertTriangle size={12} />
-                {startError}
-              </p>
-            )}
+            {(() => {
+              const hasModules = moduleTypes.length > 0;
+              const canStart = bothPresent && hasModules && !startPending;
+              return (
+                <>
+                  <button
+                    onClick={onStart}
+                    disabled={!bothPresent || !hasModules || startPending}
+                    className={`w-full px-6 py-4 font-stencil text-xl uppercase tracking-[0.2em] transition-all flex items-center justify-between ${
+                      canStart
+                        ? "bg-crimson hover:bg-crimson-bright text-bone cursor-pointer"
+                        : "bg-steel/40 text-bone-dim/50"
+                    }`}
+                  >
+                    <span className="flex items-center gap-3">
+                      {startPending ? (
+                        <Loader2 size={20} className="animate-spin" />
+                      ) : (
+                        <Bomb size={22} strokeWidth={2.5} />
+                      )}
+                      <span>
+                        {startPending
+                          ? "Arming…"
+                          : !bothPresent
+                          ? "Need 1 of each role"
+                          : !hasModules
+                          ? "Add a module"
+                          : "Arm The Bomb"}
+                      </span>
+                    </span>
+                    {canStart && <ArrowRight size={20} strokeWidth={2.5} />}
+                  </button>
+                  {startError && (
+                    <p className="mt-3 text-crimson font-mono text-xs uppercase tracking-[0.18em] flex items-center gap-2">
+                      <AlertTriangle size={12} />
+                      {startError}
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
 
@@ -463,21 +778,23 @@ function LobbyView({
 function GameOverOverlay({
   status,
   gameId,
+  preset,
   onRestart,
   restartPending,
   onHome,
 }: {
   status: "won" | "lost";
   gameId: string;
+  preset: Preset;
   onRestart: () => void;
   restartPending: boolean;
   onHome: () => void;
 }) {
   const won = status === "won";
   return (
-    <div className="absolute inset-0 bg-void/90 backdrop-blur-md flex items-center justify-center z-50 reveal">
-      <div className="text-center max-w-md px-6">
-        <div className="mb-6 flex justify-center">
+    <div className="absolute inset-0 bg-void/90 backdrop-blur-md flex items-center justify-center z-50 reveal overflow-auto py-8">
+      <div className="text-center max-w-lg px-6">
+        <div className="mb-5 flex justify-center">
           {won ? (
             <ShieldCheck size={72} className="text-phosphor" strokeWidth={1.5} />
           ) : (
@@ -485,17 +802,19 @@ function GameOverOverlay({
           )}
         </div>
         <div
-          className={`font-stencil text-6xl tracking-tight mb-3 ${
+          className={`font-stencil text-5xl sm:text-6xl tracking-tight mb-2 ${
             won ? "text-phosphor" : "text-crimson"
           }`}
         >
           {won ? "BOMB DEFUSED" : "DETONATED"}
         </div>
-        <p className="text-bone-dim font-mono text-xs uppercase tracking-[0.25em] mb-8">
+        <p className="text-bone-dim font-mono text-xs uppercase tracking-[0.25em] mb-6">
           {won ? "Outstanding teamwork." : "Better luck next time."}
         </p>
 
-        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <DistributionPanel gameId={gameId} preset={preset} won={won} />
+
+        <div className="flex flex-col sm:flex-row gap-3 justify-center mt-6">
           <button
             onClick={onRestart}
             disabled={restartPending}
@@ -521,6 +840,168 @@ function GameOverOverlay({
           Room {gameId}
         </p>
       </div>
+    </div>
+  );
+}
+
+/* Histogram + percentile panel shown beneath the result headline. Pulls
+   the game's recorded result + the preset's win distribution. Custom
+   games show a brief note and no chart; preset losses show the chart
+   without a percentile callout. The TanStack Start server fns serialise
+   `null` over the wire — we treat both `null` and `undefined` as
+   "still loading" to avoid flashing the empty state. */
+function DistributionPanel({
+  gameId,
+  preset,
+  won,
+}: {
+  gameId: string;
+  preset: Preset;
+  won: boolean;
+}) {
+  const isCustom = preset === "custom";
+  const { data: result } = useQuery({
+    queryKey: ["gameResult", gameId],
+    queryFn: () => getGameResult({ data: { gameId } }),
+    refetchInterval: (q) =>
+      /* The terminal status flips before the result row lands, so the
+         first poll can return null; retry briefly until it shows up. */
+      (q.state.data == null ? 800 : false) as number | false,
+    enabled: !isCustom,
+  });
+
+  const { data: dist } = useQuery({
+    queryKey: ["presetDistribution", preset, result?.durationMs ?? null],
+    queryFn: () =>
+      getPresetDistribution({
+        data: { preset, mineDurationMs: result?.durationMs ?? null },
+      }),
+    enabled: !isCustom && !!result,
+  });
+
+  if (isCustom) {
+    return (
+      <div className="border border-amber/40 bg-amber/5 px-4 py-3 text-amber font-mono text-[11px] uppercase tracking-[0.22em] flex items-center justify-center gap-2">
+        <AlertTriangle size={12} />
+        Custom configuration · not counted in stats
+      </div>
+    );
+  }
+
+  if (!result || !dist) {
+    return (
+      <div className="text-bone-dim/50 font-mono text-[11px] uppercase tracking-[0.25em] flex items-center justify-center gap-2 py-2">
+        <Loader2 size={11} className="animate-spin" />
+        Logging result…
+      </div>
+    );
+  }
+
+  return (
+    <div className="border border-rib bg-chassis/60 px-4 py-3 text-left">
+      <div className="flex items-baseline justify-between mb-2 text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
+        <span>{preset} preset</span>
+        <span>
+          {dist.totalWins} win{dist.totalWins === 1 ? "" : "s"} ·{" "}
+          {dist.totalLosses} loss{dist.totalLosses === 1 ? "" : "es"}
+        </span>
+      </div>
+
+      {/* This-run summary line. */}
+      <div className="flex items-baseline justify-between mb-3 gap-3">
+        <div>
+          <div className="text-[9px] font-mono uppercase tracking-[0.25em] text-bone-dim/60">
+            Your time
+          </div>
+          <div className="font-stencil text-2xl text-bone tracking-wider">
+            {result.durationMs == null
+              ? "—"
+              : formatDuration(result.durationMs)}
+          </div>
+        </div>
+        {won && dist.percentile != null && dist.totalWins > 1 && (
+          <div className="text-right">
+            <div className="text-[9px] font-mono uppercase tracking-[0.25em] text-bone-dim/60">
+              Percentile
+            </div>
+            <div className="font-stencil text-2xl text-phosphor tracking-wider">
+              {dist.percentile}%
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Histogram — only meaningful with a handful of wins. */}
+      {dist.totalWins > 0 && dist.bins.length > 0 ? (
+        <Histogram
+          bins={dist.bins}
+          binSeconds={dist.binSeconds}
+          mineMs={result.durationMs}
+        />
+      ) : (
+        <div className="text-bone-dim/55 font-mono text-[10px] uppercase tracking-[0.22em] text-center py-2">
+          First recorded {won ? "win" : "loss"} on this preset.
+        </div>
+      )}
+
+      {dist.totalWins > 0 && (
+        <div className="mt-2 flex items-baseline justify-between text-[9px] font-mono uppercase tracking-[0.22em] text-bone-dim/55">
+          <span>fast {formatDuration(dist.minMs)}</span>
+          <span>median {formatDuration(dist.medianMs)}</span>
+          <span>slow {formatDuration(dist.maxMs)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+function Histogram({
+  bins,
+  binSeconds,
+  mineMs,
+}: {
+  bins: number[];
+  binSeconds: number;
+  mineMs: number | null;
+}) {
+  const maxCount = Math.max(1, ...bins);
+  const binWidthMs = binSeconds * 1000;
+  const mineIdx =
+    mineMs != null
+      ? Math.min(bins.length - 1, Math.floor(mineMs / binWidthMs))
+      : null;
+  return (
+    <div className="flex items-end gap-[2px] h-16 border-b border-rib/70 pb-px">
+      {bins.map((count, i) => {
+        const ratio = count / maxCount;
+        const isMine = i === mineIdx;
+        return (
+          <div
+            key={i}
+            className="flex-1 min-w-0 relative"
+            style={{ height: `${Math.max(2, ratio * 100)}%` }}
+            title={`${formatDuration(i * binWidthMs)}–${formatDuration(
+              (i + 1) * binWidthMs
+            )}: ${count}`}
+          >
+            <div
+              className={`absolute inset-x-0 bottom-0 ${
+                isMine
+                  ? "bg-phosphor shadow-[0_0_6px_#00f5a0]"
+                  : "bg-steel-light/65"
+              }`}
+              style={{ height: "100%" }}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

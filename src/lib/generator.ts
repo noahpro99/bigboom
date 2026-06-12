@@ -25,6 +25,7 @@ import type {
   MorseModuleConfig,
   MorseEntry,
   PasswordModuleConfig,
+  ModuleType,
 } from "./types";
 import {
   MAZE_SIZE,
@@ -33,12 +34,14 @@ import {
   MAZE_W_E,
   MAZE_W_S,
   MAZE_W_W,
+  MAZE_DEFUSER_WALL_FRACTION,
   MEMORY_STAGES,
   MEMORY_SLOTS,
   MORSE_FREQS,
   MORSE_POOL_SIZE,
   PASSWORD_COLS,
   PASSWORD_LETTERS_PER_COL,
+  PASSWORD_DICT_SIZE,
 } from "./types";
 
 function mulberry32(seed: number) {
@@ -586,8 +589,13 @@ export function getStripReleaseTiming(
   return { value: rule?.releaseValue ?? 0 };
 }
 
-// Generate manual pages from the same configs
-export function generateManualPages(seed: number): ManualPage[] {
+// Generate manual pages from the same configs. Only includes pages for
+// module TYPES present on the bomb — multi-instance bombs collapse to
+// one page per type, since the manual content is type-shared.
+export function generateManualPages(
+  seed: number,
+  moduleTypes?: ModuleType[]
+): ManualPage[] {
   const wireConfig = generateWireModule(seed);
   const buttonConfig = generateButtonModule(seed);
 
@@ -693,17 +701,16 @@ export function generateManualPages(seed: number): ManualPage[] {
           {
             type: "paragraph",
             text:
-              "Five letter dials, each cycling through six letters. Exactly one (or sometimes two) of the words in the dictionary below can be spelled using the available letters. Spell that word and press SUBMIT. The dictionary is fixed for this manual; the per-column letters are reproduced for reference.",
+              "The defuser has five dials, each cycling six letters. The letter pools are not in this manual — only the candidate words below. Read each candidate aloud; the defuser checks their dials to see whether they can spell it. At least one will fit. Press SUBMIT once spelled.",
           },
         ],
       },
       {
-        heading: "Dictionary · letter pools",
+        heading: "Candidate words",
         content: [
           {
             type: "passwordDict",
-            words: PASSWORD_DICTIONARY,
-            columns: passwordConfig.columns,
+            words: passwordConfig.dictionary,
           },
         ],
       },
@@ -721,12 +728,16 @@ export function generateManualPages(seed: number): ManualPage[] {
           {
             type: "paragraph",
             text:
-              "The module flashes one English word in Morse code on a single LED. Decode the word. Look it up in the table below to find the response frequency (MHz). Tune the dial to that frequency and press TX. A wrong transmission is a strike.",
+              "The module flashes one English word in Morse code on a single LED (the defuser can also hold AUDIO to hear it). Decode the word with the alphabet below, find the word in the response table, and tell the defuser the matching frequency. A wrong transmission is a strike.",
           },
         ],
       },
       {
-        heading: "Word ↔ frequency table",
+        heading: "Morse alphabet",
+        content: [{ type: "morseAlphabet" }],
+      },
+      {
+        heading: "Word ↔ response frequency",
         content: [{ type: "morseTable", pool: morseConfig.pool }],
       },
     ],
@@ -783,16 +794,23 @@ export function generateManualPages(seed: number): ManualPage[] {
   // Shuffle page order per bomb so the Expert can't memorize section
   // positions across rounds.
   const orderRng = mulberry32(seed + 31337);
-  const all: ManualPage[] = [
-    wirePage,
-    buttonPage,
-    symbolsPage,
-    simonPage,
-    mazePage,
-    memoryPage,
-    morsePage,
-    passwordPage,
-  ];
+  const byType: Record<ModuleType, ManualPage> = {
+    wire: wirePage,
+    button: buttonPage,
+    symbols: symbolsPage,
+    simon: simonPage,
+    maze: mazePage,
+    memory: memoryPage,
+    morse: morsePage,
+    password: passwordPage,
+  };
+  /* If a moduleTypes list is supplied, only emit pages for types
+     actually present (dedup'd — duplicates collapse to one page). When
+     omitted (legacy call sites), emit everything as before. */
+  const present = moduleTypes
+    ? Array.from(new Set(moduleTypes))
+    : (Object.keys(byType) as ModuleType[]);
+  const all: ManualPage[] = present.map((t) => byType[t]);
   return [...all].sort(() => orderRng() - 0.5);
 }
 
@@ -986,14 +1004,25 @@ function pickPermutation(rng: () => number): Record<SimonColor, SimonColor> {
   }
 }
 
-export function generateSimonModule(seed: number): SimonModuleConfig {
-  const rng = mulberry32(seed + 0x517d_0a55);
-  const length = 3 + Math.floor(rng() * 3); // 3..5
-  const sequence: SimonColor[] = Array.from({ length }, () => pick(rng, SIMON_COLORS));
+export function generateSimonModule(
+  baseSeed: number,
+  instanceSeed?: number
+): SimonModuleConfig {
+  /* Substitution tables come from the BASE seed (they're the only
+     thing the manual shows for Simon — every instance has to lookup
+     the same table). The flash sequence varies per-instance so two
+     Simon modules on the same bomb don't play the exact same flashes. */
+  const tableRng = mulberry32(baseSeed + 0x517d_0a55);
   const tables: SimonModuleConfig["tables"] = [];
   for (let i = 0; i < 6; i++) {
-    tables.push(pickPermutation(rng));
+    tables.push(pickPermutation(tableRng));
   }
+  const iseed = instanceSeed ?? baseSeed;
+  const seqRng = mulberry32(iseed + 0x517d_5e6f);
+  const length = 3 + Math.floor(seqRng() * 3); // 3..5
+  const sequence: SimonColor[] = Array.from({ length }, () =>
+    pick(seqRng, SIMON_COLORS)
+  );
   return { sequence, tables };
 }
 
@@ -1083,6 +1112,49 @@ function generateMazeData(rng: () => number): number[] {
   return walls;
 }
 
+/* For each present wall, decide whether the DEFUSER sees it (otherwise
+   the Expert does). Walls between two cells are split-once and stamped
+   on both adjacent cells' masks, so rendering on either side stays
+   consistent. ~MAZE_DEFUSER_WALL_FRACTION of present walls go to the
+   defuser. */
+function splitMazeWalls(walls: number[], rng: () => number): number[] {
+  const defuser = new Array<number>(walls.length).fill(0);
+  for (let y = 0; y < MAZE_SIZE; y++) {
+    for (let x = 0; x < MAZE_SIZE; x++) {
+      const idx = cellIdx(x, y);
+      const w = walls[idx];
+      /* Each cell only owns its N and W edges in the iteration; E and S
+         are handled when we visit the neighbour. Outer-border walls
+         (no neighbour) are still rendered and split too. */
+      if (w & MAZE_W_N) {
+        const def = rng() < MAZE_DEFUSER_WALL_FRACTION;
+        if (def) {
+          defuser[idx] |= MAZE_W_N;
+          if (y > 0) defuser[cellIdx(x, y - 1)] |= MAZE_W_S;
+        }
+      }
+      if (w & MAZE_W_W) {
+        const def = rng() < MAZE_DEFUSER_WALL_FRACTION;
+        if (def) {
+          defuser[idx] |= MAZE_W_W;
+          if (x > 0) defuser[cellIdx(x - 1, y)] |= MAZE_W_E;
+        }
+      }
+      /* Outer south/east borders (last row/column) aren't paired with
+         another cell — own the edge here directly. */
+      if (y === MAZE_SIZE - 1 && w & MAZE_W_S) {
+        const def = rng() < MAZE_DEFUSER_WALL_FRACTION;
+        if (def) defuser[idx] |= MAZE_W_S;
+      }
+      if (x === MAZE_SIZE - 1 && w & MAZE_W_E) {
+        const def = rng() < MAZE_DEFUSER_WALL_FRACTION;
+        if (def) defuser[idx] |= MAZE_W_E;
+      }
+    }
+  }
+  return defuser;
+}
+
 /* Generate the maze pool — all mazes deterministic from the seed so
    the manual matches the bomb. Marker pairs are forced unique across
    the pool (the markers are how the player identifies which maze). */
@@ -1094,6 +1166,8 @@ export function generateMazePool(seed: number): MazeData[] {
   for (let i = 0; i < MAZE_POOL; i++) {
     const mazeRng = mulberry32(seed + 0x4d415a45 + i * 991);
     const walls = generateMazeData(mazeRng);
+    const splitRng = mulberry32(seed + 0x4d534c54 + i * 7919);
+    const defuserWalls = splitMazeWalls(walls, splitRng);
 
     // Place two markers in distinct cells. Reroll if the pair has been used.
     let markers: [MazeCell, MazeCell] | null = null;
@@ -1118,7 +1192,7 @@ export function generateMazePool(seed: number): MazeData[] {
       // Fallback — should never trigger at MAZE_POOL=9 with 36 cells.
       markers = [{ x: i, y: 0 }, { x: i, y: MAZE_SIZE - 1 }];
     }
-    pool.push({ walls, markers });
+    pool.push({ walls, defuserWalls, markers });
   }
   return pool;
 }
@@ -1151,9 +1225,19 @@ function mazeBfs(maze: MazeData, from: MazeCell): number[] {
   return dist;
 }
 
-export function generateMazeModule(seed: number): MazeModuleConfig {
-  const rng = mulberry32(seed + 0x4d415a01);
-  const pool = generateMazePool(seed);
+export function generateMazeModule(
+  baseSeed: number,
+  instanceSeed?: number
+): MazeModuleConfig {
+  /* The maze POOL is shared across the bomb — the manual shows it once,
+     so every maze instance has to look it up from the SAME seed. The
+     active maze + start + goal are picked from the per-instance seed
+     so multi-instance bombs can have different active mazes. When no
+     instanceSeed is given (legacy call sites) we fall back to baseSeed
+     so single-instance bombs match their pre-refactor behaviour. */
+  const iseed = instanceSeed ?? baseSeed;
+  const rng = mulberry32(iseed + 0x4d415a01);
+  const pool = generateMazePool(baseSeed);
   const activeIndex = Math.floor(rng() * pool.length);
   const active = pool[activeIndex];
 
@@ -1217,46 +1301,54 @@ function shuffleArray<T>(rng: () => number, arr: T[]): T[] {
   return result;
 }
 
-export function generateMemoryModule(seed: number): MemoryModuleConfig {
-  const rng = mulberry32(seed + 0x4d454d_01);
+export function generateMemoryModule(
+  baseSeed: number,
+  instanceSeed?: number
+): MemoryModuleConfig {
+  /* Rules (per stage × per display) come from the base seed since the
+     manual shows them once. Per-stage label permutation and the
+     displayed number come from the instance seed so two Memory
+     modules on the same bomb don't run the same stages, but the
+     expert's rule lookup is identical for both. */
+  const ruleRng = mulberry32(baseSeed + 0x4d454d_01);
+  const iseed = instanceSeed ?? baseSeed;
+  const instRng = mulberry32(iseed + 0x4d454d_2a);
   const stages: MemoryStageConfig[] = [];
 
   for (let s = 0; s < MEMORY_STAGES; s++) {
-    const labels = shuffleArray(rng, [1, 2, 3, 4]);
-    const display = 1 + Math.floor(rng() * MEMORY_SLOTS);
+    const labels = shuffleArray(instRng, [1, 2, 3, 4]);
+    const display = 1 + Math.floor(instRng() * MEMORY_SLOTS);
 
-    // Pick a rule. First stage cannot reference history; later stages
-    // are biased toward referencing prior stages to give the module
-    // its characteristic "memory" feel.
-    let rule: MemoryRule;
-    if (s === 0) {
-      // Stage 1 — only "press position N", "press label N", or "press the displayed position".
-      const r = rng();
-      if (r < 0.4) rule = { type: "pos", value: 1 + Math.floor(rng() * 4) };
-      else if (r < 0.8) rule = { type: "label", value: 1 + Math.floor(rng() * 4) };
-      else rule = { type: "display" };
-    } else {
-      // Later stages — favour history references.
-      const r = rng();
-      if (r < 0.45) {
-        rule = { type: "samePos", stage: Math.floor(rng() * s) };
-      } else if (r < 0.8) {
-        rule = { type: "sameLabel", stage: Math.floor(rng() * s) };
-      } else if (r < 0.9) {
-        rule = { type: "pos", value: 1 + Math.floor(rng() * 4) };
-      } else {
-        rule = { type: "label", value: 1 + Math.floor(rng() * 4) };
-      }
+    /* For each possible display value, pick an independent rule.
+       Stage 1 cannot reference history; later stages favour history
+       references — that's what gives the module its "memory" feel. */
+    const rulesByDisplay: MemoryRule[] = [];
+    for (let d = 0; d < MEMORY_SLOTS; d++) {
+      rulesByDisplay.push(pickMemoryRule(ruleRng, s));
     }
 
-    stages.push({ labels, display, rule });
+    stages.push({ labels, display, rulesByDisplay });
   }
 
   return { stages };
 }
 
-/* Given the rule and the player's confirmed history, what is the
-   expected button position (1..4) for the current stage? */
+function pickMemoryRule(rng: () => number, stageIdx: number): MemoryRule {
+  if (stageIdx === 0) {
+    const r = rng();
+    if (r < 0.4) return { type: "pos", value: 1 + Math.floor(rng() * 4) };
+    if (r < 0.8) return { type: "label", value: 1 + Math.floor(rng() * 4) };
+    return { type: "display" };
+  }
+  const r = rng();
+  if (r < 0.45) return { type: "samePos", stage: Math.floor(rng() * stageIdx) };
+  if (r < 0.8) return { type: "sameLabel", stage: Math.floor(rng() * stageIdx) };
+  if (r < 0.9) return { type: "pos", value: 1 + Math.floor(rng() * 4) };
+  return { type: "label", value: 1 + Math.floor(rng() * 4) };
+}
+
+/* Given the player's confirmed history and the displayed value, what is
+   the expected button position (1..4) for the current stage? */
 export function getMemoryExpected(
   config: MemoryModuleConfig,
   stageIdx: number,
@@ -1264,17 +1356,18 @@ export function getMemoryExpected(
 ): number {
   const stage = config.stages[stageIdx];
   const labels = stage.labels;
-  switch (stage.rule.type) {
+  const rule = stage.rulesByDisplay[stage.display - 1];
+  switch (rule.type) {
     case "pos":
-      return stage.rule.value;
+      return rule.value;
     case "label": {
-      const pos = labels.indexOf(stage.rule.value) + 1;
+      const pos = labels.indexOf(rule.value) + 1;
       return pos > 0 ? pos : 1;
     }
     case "samePos":
-      return history[stage.rule.stage]?.position ?? 1;
+      return history[rule.stage]?.position ?? 1;
     case "sameLabel": {
-      const lbl = history[stage.rule.stage]?.label ?? 1;
+      const lbl = history[rule.stage]?.label ?? 1;
       const pos = labels.indexOf(lbl) + 1;
       return pos > 0 ? pos : 1;
     }
@@ -1311,20 +1404,30 @@ export const MORSE: Record<string, string> = {
   Z: "--..",
 };
 
-/* Wordlist for the morse module. All 5–6 letter words built from the
-   basic morse alphabet, so every character has a defined encoding.
-   Kept reasonably distinct (different starting/ending characters,
-   varied morse-rhythm signatures) so flashing-light decoding stays
-   tractable. */
+/* Wordlist for the morse module — 3-7 letters, varied rhythms so the
+   flashing decode stays interesting. The defuser doesn't know the
+   length; varying it stops them assuming "5 dots/dashes per word
+   roughly" and forces honest decoding. */
 const MORSE_WORDS = [
-  "SHELL", "HALLS", "SLICK", "TRICK", "BOXES", "LEAKS", "STROB", "BISTR",
-  "FLICK", "BOMBS", "BREAK", "BRICK", "STEAK", "STING", "VECTO", "BEATS",
-  "CRANE", "DRIFT", "EAGER", "FROST", "GLINT", "HONEY", "INDEX", "JUMPS",
-  "KNIFE", "LEMON", "MAPLE", "NORTH", "OASIS", "PIANO", "QUILT", "RAVEN",
+  // 3-letter
+  "DOG", "CAT", "BOX", "SUN", "FOX", "MAP", "JET", "ICE", "OAK", "OWL",
+  "RAY", "VAN", "ZAP", "INK", "ARC", "TAP", "BUS",
+  // 4-letter
+  "BOMB", "WIRE", "FUSE", "DUSK", "DAWN", "HALT", "PASS", "MOON", "STAR",
+  "WOLF", "PEAK", "CALM", "ROCK", "BLUE", "FROG", "JUMP", "KILO", "MIKE",
+  "ECHO", "GULF",
+  // 5-letter
+  "SHELL", "HALLS", "SLICK", "TRICK", "BOXES", "LEAKS", "FLICK", "BREAK",
+  "BRICK", "STEAK", "STING", "BEATS", "CRANE", "DRIFT", "EAGER", "FROST",
+  "GLINT", "HONEY", "KNIFE", "MAPLE", "NORTH", "OASIS", "QUILT", "RAVEN",
   "SHORE", "TIGER", "URBAN", "VAULT", "WHEAT", "YIELD", "ZEBRA", "ALPHA",
-  "BRAVO", "DELTA", "ECHO",  "FOXY",  "GULF",  "HOTEL", "JULY",  "KILO",
-  "MIKE",  "NOVA",  "OSCAR", "QUARK", "ROVER", "SIGMA", "TANGO", "UMBRA",
-  "VIRAL", "WIRED", "XENON", "ZONES",
+  "BRAVO", "DELTA", "HOTEL", "OSCAR", "ROVER", "SIGMA", "TANGO", "VIRAL",
+  // 6-letter
+  "SECRET", "FALCON", "PLANET", "ORBITS", "BEACON", "ENIGMA", "QUARTZ",
+  "MARROW", "BRIDGE", "FIRING", "JUNGLE", "GAMBIT",
+  // 7-letter
+  "ARMORED", "BLAZING", "CARBINE", "EXPLODE", "FAILURE",
+  "HARBOUR", "NETWORK", "WARNING", "SILENCE",
 ];
 
 export function encodeMorse(word: string): string[] {
@@ -1334,26 +1437,30 @@ export function encodeMorse(word: string): string[] {
     .map((ch) => MORSE[ch] ?? "");
 }
 
-export function generateMorseModule(seed: number): MorseModuleConfig {
-  const rng = mulberry32(seed + 0x4d4f_5253);
-
-  // Pick MORSE_POOL_SIZE distinct words.
-  const words = shuffleArray(rng, MORSE_WORDS).slice(0, MORSE_POOL_SIZE);
-  // Assign each word a distinct frequency index from MORSE_FREQS.
+export function generateMorseModule(
+  baseSeed: number,
+  instanceSeed?: number
+): MorseModuleConfig {
+  /* Pool (word ↔ frequency table) is what the manual shows — it must
+     be the same across every Morse instance on the bomb, so it's
+     keyed on the base seed. activeIndex (which word is flashing on
+     THIS module) varies per instance so multi-instance bombs have
+     different beacons. */
+  const poolRng = mulberry32(baseSeed + 0x4d4f_5253);
+  const words = shuffleArray(poolRng, MORSE_WORDS).slice(0, MORSE_POOL_SIZE);
   const freqIndices = shuffleArray(
-    rng,
+    poolRng,
     Array.from({ length: MORSE_FREQS.length }, (_, i) => i)
   ).slice(0, MORSE_POOL_SIZE);
-
   const pool: MorseEntry[] = words.map((word, i) => ({
     word,
     freqIndex: freqIndices[i],
   }));
-
-  // Sort the pool by word so the manual is easy to scan.
   pool.sort((a, b) => a.word.localeCompare(b.word));
 
-  const activeIndex = Math.floor(rng() * pool.length);
+  const iseed = instanceSeed ?? baseSeed;
+  const activeRng = mulberry32(iseed + 0x4d4f_ac71);
+  const activeIndex = Math.floor(activeRng() * pool.length);
   return { pool, activeIndex };
 }
 
@@ -1367,6 +1474,10 @@ export function formatMorseFreq(freqIndex: number): string {
 
 // ---- Password ----
 
+/* Master pool of 5-letter words. Each bomb samples PASSWORD_DICT_SIZE
+   words from this pool (always including the target word). The Expert
+   sees only that small subset in the manual — not the entire pool —
+   and works out which ones can be spelled from the column letters. */
 const PASSWORD_WORDLIST = [
   "ABOUT", "AFTER", "AGAIN", "BELOW", "COULD", "EVERY", "FIRST", "FOUND",
   "GREAT", "HOUSE", "LARGE", "LEARN", "NEVER", "OTHER", "PLACE", "PLANT",
@@ -1383,9 +1494,8 @@ export function generatePasswordModule(seed: number): PasswordModuleConfig {
   const rng = mulberry32(seed + 0x70_5357_4444);
   const target = pick(rng, PASSWORD_WORDLIST);
 
-  // Build per-column letter pools. Each column must include the target's
-  // letter at that index. Fill the rest with random letters from the
-  // alphabet, ensuring no duplicates within a column.
+  // Per-column letter pools: each column must include the target's
+  // letter at that index; rest filled with random non-duplicate letters.
   const columns: string[][] = [];
   for (let col = 0; col < PASSWORD_COLS; col++) {
     const required = target[col];
@@ -1396,13 +1506,18 @@ export function generatePasswordModule(seed: number): PasswordModuleConfig {
     columns.push(shuffleArray(rng, Array.from(pool)));
   }
 
-  // Find every word in the wordlist that can be spelled from these
-  // columns — the server accepts any of them, and the manual surfaces
-  // the list (with the spellable ones highlighted? no — the puzzle
-  // is the player FINDING the spellable ones, so just show the full
-  // dictionary). We compute the accepted set for the server.
+  // Per-bomb dictionary: target + (DICT_SIZE - 1) random decoys, drawn
+  // from the master pool without replacement, then shuffled so the
+  // target isn't always at position 0.
+  const decoyPool = PASSWORD_WORDLIST.filter((w) => w !== target);
+  const decoys = shuffleArray(rng, decoyPool).slice(0, PASSWORD_DICT_SIZE - 1);
+  const dictionary = shuffleArray(rng, [target, ...decoys]);
+
+  // Server-accepted set: any dictionary word the columns can spell.
+  // Always includes `target`; may include 1-2 decoys whose letters
+  // overlap the columns by chance.
   const accepted: string[] = [];
-  for (const word of PASSWORD_WORDLIST) {
+  for (const word of dictionary) {
     let ok = true;
     for (let i = 0; i < PASSWORD_COLS; i++) {
       if (!columns[i].includes(word[i])) {
@@ -1413,7 +1528,7 @@ export function generatePasswordModule(seed: number): PasswordModuleConfig {
     if (ok) accepted.push(word);
   }
 
-  return { columns, acceptedWords: accepted };
+  return { columns, dictionary, acceptedWords: accepted };
 }
 
 export function passwordIsCorrect(
@@ -1422,11 +1537,6 @@ export function passwordIsCorrect(
 ): boolean {
   return config.acceptedWords.includes(attempt.toUpperCase());
 }
-
-/* The dictionary surfaced in the manual — full wordlist, *not* the
-   per-bomb accepted set. The puzzle is for the player to identify
-   which words are spellable from the dial letters. */
-export const PASSWORD_DICTIONARY = PASSWORD_WORDLIST;
 
 export function getSymbolsSolution(config: SymbolsModuleConfig): string[] {
   const activeIds = new Set(config.activeSymbols.map((s) => s.id));

@@ -1,48 +1,28 @@
-import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { User } from "lucide-react";
+import { useState } from "react";
+import { Settings } from "lucide-react";
 import { SettingsModal } from "./SettingsModal";
-import { getCurrentUser } from "../server/auth";
-import { getSessionId } from "../lib/session";
 import { play } from "../lib/sound";
 
-/* Modal-launcher button + the modal itself. Each page that wants Settings
-   access just drops one of these in its existing header — no floating
-   absolute positioning, no overlap with content. */
+/* Modal-launcher: small gear icon, no text. Drops cleanly into any
+   page header without crowding existing chrome. */
 
 export type ProfileButtonVariant =
   | "dark" // on the bomb/lobby/home chassis
   | "light"; // on the paper manual
 
 export interface ProfileButtonProps {
-  /* "dark" = on chassis backgrounds, "light" = on the paper manual.
-     Defaults to dark since most pages use that. */
   variant?: ProfileButtonVariant;
-  /* If false, just shows the icon (used when chrome is tight, e.g. in
-     the BombView header at mobile width). Defaults to true. */
+  /* Kept for backwards compat with existing call sites that still pass
+     showLabel; ignored — the button is always icon-only now. */
   showLabel?: boolean;
   className?: string;
 }
 
 export function ProfileButton({
   variant = "dark",
-  showLabel = true,
   className = "",
 }: ProfileButtonProps) {
   const [open, setOpen] = useState(false);
-  const [sessionId, setSessionId] = useState("");
-  useEffect(() => setSessionId(getSessionId()), []);
-
-  /* Lazy: only fetch once we have a real session id (avoids the SSR
-     placeholder hitting the server). */
-  const { data: user } = useQuery({
-    queryKey: ["currentUser", sessionId],
-    queryFn: () => getCurrentUser({ data: { sessionId } }),
-    enabled: !!sessionId,
-    staleTime: 30_000,
-  });
-
-  const labelText = user?.username ?? "Profile";
 
   const palette =
     variant === "light"
@@ -57,13 +37,10 @@ export function ProfileButton({
           setOpen(true);
         }}
         aria-label="Open settings"
-        title={user ? `Signed in as ${user.username}` : "Settings"}
-        className={`flex items-center gap-1.5 border px-2 py-1.5 font-mono text-[10px] uppercase tracking-[0.22em] transition-colors ${palette} ${className}`}
+        title="Settings"
+        className={`inline-flex items-center justify-center border p-1.5 transition-colors ${palette} ${className}`}
       >
-        <User size={13} strokeWidth={2.4} />
-        {showLabel && (
-          <span className="max-w-[8rem] truncate">{labelText}</span>
-        )}
+        <Settings size={16} strokeWidth={2.2} />
       </button>
       <SettingsModal open={open} onClose={() => setOpen(false)} />
     </>

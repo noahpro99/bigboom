@@ -24,6 +24,7 @@ import {
 import type {
   GameState,
   Module,
+  ModuleType,
   PlayerRole,
   ButtonModuleConfig,
   WireModuleConfig,
@@ -36,11 +37,16 @@ import type {
   MemoryPress,
   MorseModuleConfig,
   PasswordModuleConfig,
+  Preset,
+  GameConfig,
 } from "../lib/types";
 import {
   MORSE_FREQS,
   PASSWORD_COLS,
   PASSWORD_LETTERS_PER_COL,
+  PRESET_CONFIGS,
+  canonicalModuleSet,
+  detectPreset,
 } from "../lib/types";
 
 function shortId(): string {
@@ -52,67 +58,188 @@ function shortId(): string {
 
 const ACTIVE_SECONDS = 10;
 
+/* Per-instance seed derivation. The MANUAL-visible content of each
+   module type is always derived from the bomb's base `seed` (so the
+   one manual page per type stays consistent across instances). The
+   instance seed varies per-instance so duplicates aren't identical
+   copies; what exactly differs is up to each generator. */
+const TYPE_SEED_SALT: Record<ModuleType, number> = {
+  wire: 0x10_0001,
+  button: 0x20_0001,
+  symbols: 0x30_0001,
+  simon: 0x40_0001,
+  maze: 0x50_0001,
+  memory: 0x60_0001,
+  morse: 0x70_0001,
+  password: 0x80_0001,
+};
+
+function instanceSeed(
+  baseSeed: number,
+  type: ModuleType,
+  instanceIdx: number
+): number {
+  // Mix base + type salt + instance index; unsigned 32-bit result for stability.
+  return (baseSeed + TYPE_SEED_SALT[type] + instanceIdx * 7919) >>> 0;
+}
+
+/* Spawn the module rows for a game given its config. Walks the
+   moduleTypes array preserving duplicates — N occurrences of the same
+   type spawn N independent instances. Each instance gets a derived
+   seed via `instanceSeed()`. The legacy "secret extra symbols when
+   seed % 3 === 0" rule is gone; symbols count now comes purely from
+   the moduleTypes array. */
+function spawnModules(
+  db: ReturnType<typeof getDb>,
+  gameId: string,
+  seed: number,
+  moduleTypes: ModuleType[]
+) {
+  let pos = 0;
+  const seenCount: Record<ModuleType, number> = {
+    wire: 0, button: 0, symbols: 0, simon: 0,
+    maze: 0, memory: 0, morse: 0, password: 0,
+  };
+  /* Symbols share columns across all instances on the bomb (one manual
+     page covers all). Only build the columns if there's at least one
+     symbols instance, so empty games don't waste the work. */
+  const symbolsCount = moduleTypes.filter((t) => t === "symbols").length;
+  const sharedSymbolsColumns =
+    symbolsCount > 0 ? generateSymbolsColumns(seed) : null;
+
+  for (const type of moduleTypes) {
+    const i = seenCount[type]++;
+    const iseed = instanceSeed(seed, type, i);
+    let configJson: string;
+    /* For modules where (baseSeed, instanceSeed) is split properly,
+       pass both — manual content stays keyed on baseSeed and only
+       per-instance variation uses iseed. For modules where everything
+       comes from one seed (wire/button/password), call with baseSeed
+       so the manual page always matches. Multi-instance of those types
+       therefore produces duplicate puzzles, but at least the manual
+       can describe them. */
+    if (type === "wire") {
+      configJson = JSON.stringify(generateWireModule(seed));
+    } else if (type === "button") {
+      configJson = JSON.stringify(generateButtonModule(seed));
+    } else if (type === "symbols") {
+      /* Symbols already splits: sharedSymbolsColumns + per-instance
+         activeSymbols. iseed picks distinct active sets per instance. */
+      configJson = JSON.stringify(
+        generateSymbolsModule(iseed, sharedSymbolsColumns!)
+      );
+    } else if (type === "simon") {
+      configJson = JSON.stringify(generateSimonModule(seed, iseed));
+    } else if (type === "maze") {
+      configJson = JSON.stringify(generateMazeModule(seed, iseed));
+    } else if (type === "memory") {
+      configJson = JSON.stringify(generateMemoryModule(seed, iseed));
+    } else if (type === "morse") {
+      configJson = JSON.stringify(generateMorseModule(seed, iseed));
+    } else if (type === "password") {
+      configJson = JSON.stringify(generatePasswordModule(seed));
+    } else {
+      continue;
+    }
+    db.run(
+      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, ?, ?, ?)",
+      [nanoid(), gameId, type, pos++, configJson]
+    );
+  }
+}
+
+/* Sanity-check and canonicalise a config from the wire. Timer is
+   clamped to a sane range; per-type counts are clamped to [0, MAX].
+   No module type is locked-on — a custom config can have zero of any
+   type (and even zero total). Duplicates in moduleTypes are preserved. */
+const MAX_PER_TYPE = 3;
+function normalizeConfig(input: Partial<GameConfig>): GameConfig {
+  const timerSeconds = Math.max(
+    60,
+    Math.min(1800, Math.floor(input.timerSeconds ?? 300))
+  );
+  const counts: Record<ModuleType, number> = {
+    wire: 0, button: 0, symbols: 0, simon: 0,
+    maze: 0, memory: 0, morse: 0, password: 0,
+  };
+  for (const t of input.moduleTypes ?? []) {
+    if (t in counts) counts[t]++;
+  }
+  for (const k of Object.keys(counts) as ModuleType[]) {
+    counts[k] = Math.min(MAX_PER_TYPE, counts[k]);
+  }
+  const order: ModuleType[] = [
+    "wire",
+    "button",
+    "symbols",
+    "simon",
+    "maze",
+    "memory",
+    "morse",
+    "password",
+  ];
+  const moduleTypes: ModuleType[] = [];
+  for (const t of order) {
+    for (let i = 0; i < counts[t]; i++) moduleTypes.push(t);
+  }
+  const preset = detectPreset({ timerSeconds, moduleTypes });
+  return { preset, timerSeconds, moduleTypes };
+}
+
+/* Resolve a partial input into a full GameConfig. If a preset name is
+   given, that preset wins. Otherwise normalize the raw timer+modules. */
+function resolveConfig(input: {
+  preset?: Preset;
+  timerSeconds?: number;
+  moduleTypes?: ModuleType[];
+}): GameConfig {
+  if (input.preset && input.preset !== "custom") {
+    const base = PRESET_CONFIGS[input.preset];
+    return {
+      preset: base.preset,
+      timerSeconds: base.timerSeconds,
+      moduleTypes: [...base.moduleTypes],
+    };
+  }
+  return normalizeConfig({
+    timerSeconds: input.timerSeconds,
+    moduleTypes: input.moduleTypes,
+  });
+}
+
 export const createGame = createServerFn({ method: "POST" })
-  .validator((data: { sessionId: string }) => data)
+  .validator(
+    (data: {
+      sessionId: string;
+      preset?: Preset;
+      timerSeconds?: number;
+      moduleTypes?: ModuleType[];
+    }) => data
+  )
   .handler(async ({ data }) => {
     const db = getDb();
     const gameId = shortId();
     const seed = Math.floor(Math.random() * 2_000_000_000);
     const serial = generateSerialNumber(seed);
+    /* Default to "standard" if no preset and no override were sent. The
+       lobby lets either player change it before the bomb is armed. */
+    const hasOverride =
+      data.preset != null ||
+      data.timerSeconds != null ||
+      (data.moduleTypes && data.moduleTypes.length > 0);
+    const config = resolveConfig(
+      hasOverride ? data : { preset: "standard" }
+    );
+    const moduleSet = canonicalModuleSet(config.moduleTypes);
 
     db.run(
-      "INSERT INTO games (id, seed, serial_number, status, timer_seconds) VALUES (?, ?, ?, 'waiting', 300)",
-      [gameId, seed, serial]
+      `INSERT INTO games
+        (id, seed, serial_number, status, timer_seconds, preset, module_set)
+       VALUES (?, ?, ?, 'waiting', ?, ?, ?)`,
+      [gameId, seed, serial, config.timerSeconds, config.preset, moduleSet]
     );
 
-    const wireConfig = generateWireModule(seed);
-    const buttonConfig = generateButtonModule(seed);
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'wire', 0, ?)",
-      [nanoid(), gameId, JSON.stringify(wireConfig)]
-    );
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'button', 1, ?)",
-      [nanoid(), gameId, JSON.stringify(buttonConfig)]
-    );
-    // All symbols modules on a bomb share the SAME columns (one manual page
-    // covers all of them). Each module's activeSymbols are unique to it.
-    const symbolCount = seed % 3 === 0 ? 2 : 1;
-    if (symbolCount > 0) {
-      const sharedColumns = generateSymbolsColumns(seed);
-      for (let i = 0; i < symbolCount; i++) {
-        db.run(
-          "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'symbols', ?, ?)",
-          [nanoid(), gameId, 2 + i, JSON.stringify(generateSymbolsModule(seed + i * 77777, sharedColumns))]
-        );
-      }
-    }
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'simon', ?, ?)",
-      [nanoid(), gameId, 2 + symbolCount, JSON.stringify(generateSimonModule(seed))]
-    );
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'maze', ?, ?)",
-      [nanoid(), gameId, 3 + symbolCount, JSON.stringify(generateMazeModule(seed))]
-    );
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'memory', ?, ?)",
-      [nanoid(), gameId, 4 + symbolCount, JSON.stringify(generateMemoryModule(seed))]
-    );
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'morse', ?, ?)",
-      [nanoid(), gameId, 5 + symbolCount, JSON.stringify(generateMorseModule(seed))]
-    );
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'password', ?, ?)",
-      [nanoid(), gameId, 6 + symbolCount, JSON.stringify(generatePasswordModule(seed))]
-    );
+    spawnModules(db, gameId, seed, config.moduleTypes);
 
     // Creator starts as Defuser.
     db.run(
@@ -230,6 +357,8 @@ export const getGameState = createServerFn({ method: "GET" })
       strikes: number;
       max_strikes: number;
       created_at: number;
+      preset: string;
+      module_set: string;
     } | null;
 
     if (!gameRow) return null;
@@ -289,6 +418,12 @@ export const getGameState = createServerFn({ method: "GET" })
       myRole = mine?.role ?? null;
     }
 
+    /* Derive moduleTypes from the canonical module_set so the lobby and
+       end-of-game card can render the active configuration. */
+    const moduleTypes = (gameRow.module_set || "")
+      .split(",")
+      .filter(Boolean) as ModuleType[];
+
     return {
       game: {
         id: gameRow.id,
@@ -300,6 +435,8 @@ export const getGameState = createServerFn({ method: "GET" })
         strikes: gameRow.strikes,
         maxStrikes: gameRow.max_strikes,
         createdAt: gameRow.created_at,
+        preset: gameRow.preset as Preset,
+        moduleTypes,
       },
       players: players.map((p) => ({ role: p.role, joinedAt: p.last_seen })),
       modules,
@@ -308,73 +445,96 @@ export const getGameState = createServerFn({ method: "GET" })
     };
   });
 
-// Re-arm the same room with a fresh bomb. Keeps the room code and player slots,
-// regenerates seed/serial/modules, resets timer and strikes.
+/* Update the bomb config while the room is still in lobby. Any player in
+   the room can do this — coop / trust-based. Re-generates the bomb
+   modules so the host can preview the new module set if they want, but
+   the seed stays the same. Refused if the game is already active or terminal. */
+export const updateGameConfig = createServerFn({ method: "POST" })
+  .validator(
+    (data: {
+      gameId: string;
+      preset?: Preset;
+      timerSeconds?: number;
+      moduleTypes?: ModuleType[];
+    }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const row = db
+      .query("SELECT seed, status FROM games WHERE id = ?")
+      .get(data.gameId) as { seed: number; status: string } | null;
+    if (!row) return { ok: false as const, error: "Game not found" };
+    if (row.status !== "waiting") {
+      return {
+        ok: false as const,
+        error: "Cannot change config after the bomb is armed",
+      };
+    }
+
+    const config = resolveConfig(data);
+    const moduleSet = canonicalModuleSet(config.moduleTypes);
+
+    db.run(
+      "UPDATE games SET timer_seconds = ?, preset = ?, module_set = ? WHERE id = ?",
+      [config.timerSeconds, config.preset, moduleSet, data.gameId]
+    );
+    db.run("DELETE FROM modules WHERE game_id = ?", [data.gameId]);
+    spawnModules(db, data.gameId, row.seed, config.moduleTypes);
+
+    return { ok: true as const };
+  });
+
+// Re-arm the same room with a fresh bomb. Keeps the room code, player
+// slots, AND the prior config — the same preset/module set is reused so
+// stats stay comparable across replays in the same room.
 export const restartGame = createServerFn({ method: "POST" })
   .validator((data: { gameId: string }) => data)
   .handler(async ({ data }) => {
     const db = getDb();
     const game = db
-      .query("SELECT id FROM games WHERE id = ?")
-      .get(data.gameId) as { id: string } | null;
+      .query(
+        "SELECT id, preset, timer_seconds, module_set FROM games WHERE id = ?"
+      )
+      .get(data.gameId) as
+      | {
+          id: string;
+          preset: Preset;
+          timer_seconds: number;
+          module_set: string;
+        }
+      | null;
     if (!game) return { ok: false as const, error: "Game not found" };
+
+    const moduleTypes = (game.module_set || "")
+      .split(",")
+      .filter(Boolean) as ModuleType[];
+    const config = resolveConfig({
+      preset: game.preset,
+      timerSeconds: game.timer_seconds,
+      moduleTypes,
+    });
 
     const newSeed = Math.floor(Math.random() * 2_000_000_000);
     const newSerial = generateSerialNumber(newSeed);
 
     db.run(
-      "UPDATE games SET seed = ?, serial_number = ?, status = 'waiting', timer_seconds = 300, started_at = NULL, strikes = 0 WHERE id = ?",
-      [newSeed, newSerial, data.gameId]
+      `UPDATE games
+       SET seed = ?, serial_number = ?, status = 'waiting',
+           timer_seconds = ?, started_at = NULL, strikes = 0,
+           preset = ?, module_set = ?
+       WHERE id = ?`,
+      [
+        newSeed,
+        newSerial,
+        config.timerSeconds,
+        config.preset,
+        canonicalModuleSet(config.moduleTypes),
+        data.gameId,
+      ]
     );
 
     db.run("DELETE FROM modules WHERE game_id = ?", [data.gameId]);
-
-    const wireConfig = generateWireModule(newSeed);
-    const buttonConfig = generateButtonModule(newSeed);
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'wire', 0, ?)",
-      [nanoid(), data.gameId, JSON.stringify(wireConfig)]
-    );
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'button', 1, ?)",
-      [nanoid(), data.gameId, JSON.stringify(buttonConfig)]
-    );
-    const symbolCount = newSeed % 3 === 0 ? 2 : 1;
-    if (symbolCount > 0) {
-      const sharedColumns = generateSymbolsColumns(newSeed);
-      for (let i = 0; i < symbolCount; i++) {
-        db.run(
-          "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'symbols', ?, ?)",
-          [nanoid(), data.gameId, 2 + i, JSON.stringify(generateSymbolsModule(newSeed + i * 77777, sharedColumns))]
-        );
-      }
-    }
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'simon', ?, ?)",
-      [nanoid(), data.gameId, 2 + symbolCount, JSON.stringify(generateSimonModule(newSeed))]
-    );
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'maze', ?, ?)",
-      [nanoid(), data.gameId, 3 + symbolCount, JSON.stringify(generateMazeModule(newSeed))]
-    );
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'memory', ?, ?)",
-      [nanoid(), data.gameId, 4 + symbolCount, JSON.stringify(generateMemoryModule(newSeed))]
-    );
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'morse', ?, ?)",
-      [nanoid(), data.gameId, 5 + symbolCount, JSON.stringify(generateMorseModule(newSeed))]
-    );
-
-    db.run(
-      "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'password', ?, ?)",
-      [nanoid(), data.gameId, 6 + symbolCount, JSON.stringify(generatePasswordModule(newSeed))]
-    );
+    spawnModules(db, data.gameId, newSeed, config.moduleTypes);
 
     return { ok: true as const };
   });
@@ -400,6 +560,20 @@ export const startGame = createServerFn({ method: "POST" })
       };
     }
 
+    /* Refuse to arm a bomb with zero modules — there'd be nothing to
+       defuse and the game would just tick down to a guaranteed loss.
+       Custom configs are otherwise free to drop any module, but at
+       least one has to remain. */
+    const moduleCount = db
+      .query("SELECT COUNT(*) AS cnt FROM modules WHERE game_id = ?")
+      .get(data.gameId) as { cnt: number };
+    if (moduleCount.cnt === 0) {
+      return {
+        ok: false as const,
+        error: "Add at least one module before arming",
+      };
+    }
+
     const now = Math.floor(Date.now() / 1000);
     db.run(
       "UPDATE games SET status = 'active', started_at = ? WHERE id = ? AND status = 'waiting'",
@@ -420,6 +594,7 @@ function applyStrike(gameId: string): { strikes: number; lost: boolean } {
     lost ? "lost" : "active",
     gameId,
   ]);
+  if (lost) recordGameResult(gameId, "lost");
   return { strikes: newStrikes, lost };
 }
 
@@ -432,10 +607,179 @@ function checkAllSolved(gameId: string): boolean {
     .get(gameId) as { cnt: number };
   if (remaining.cnt === 0) {
     db.run("UPDATE games SET status = 'won' WHERE id = ?", [gameId]);
+    recordGameResult(gameId, "won");
     return true;
   }
   return false;
 }
+
+/* Write a row to game_results when the game first enters a terminal
+   state. Idempotent: the PRIMARY KEY on game_id and INSERT OR IGNORE
+   make double-fire a no-op (which can happen if a strike + a final
+   solve race each other). duration_ms is wall-clock between started_at
+   and now; if for some reason started_at is null (e.g. never armed),
+   it stays null. */
+function recordGameResult(gameId: string, status: "won" | "lost") {
+  const db = getDb();
+  const row = db
+    .query(
+      "SELECT started_at, timer_seconds, preset, module_set FROM games WHERE id = ?"
+    )
+    .get(gameId) as
+    | {
+        started_at: number | null;
+        timer_seconds: number;
+        preset: string;
+        module_set: string;
+      }
+    | null;
+  if (!row) return;
+  const now = Math.floor(Date.now() / 1000);
+  const durationMs =
+    row.started_at !== null ? (now - row.started_at) * 1000 : null;
+  db.run(
+    `INSERT OR IGNORE INTO game_results
+       (game_id, preset, timer_seconds, module_set, status, duration_ms)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      gameId,
+      row.preset,
+      row.timer_seconds,
+      row.module_set,
+      status,
+      durationMs,
+    ]
+  );
+}
+
+/* Histogram + percentile query for a given preset's WON games. Bin
+   width is fixed at 5 s so the chart reads as integer seconds buckets;
+   returned `bins` array gives counts per bin from 0 to timer_seconds.
+   `percentile` is the requested duration's standing among wins (0-100,
+   lower = faster). Returns null for custom games or empty datasets. */
+export const getPresetDistribution = createServerFn({ method: "GET" })
+  .validator(
+    (data: { preset: Preset; mineDurationMs?: number | null }) => data
+  )
+  .handler(
+    async ({
+      data,
+    }): Promise<
+      | null
+      | {
+          preset: Preset;
+          totalWins: number;
+          totalLosses: number;
+          binSeconds: number;
+          bins: number[];
+          minMs: number;
+          maxMs: number;
+          medianMs: number;
+          /* Percentile of `mineDurationMs` among wins, lower = faster.
+             null if mineDurationMs wasn't supplied or no comparable wins. */
+          percentile: number | null;
+        }
+    > => {
+      if (data.preset === "custom") return null;
+      const db = getDb();
+      const wins = db
+        .query(
+          "SELECT duration_ms FROM game_results WHERE preset = ? AND status = 'won' AND duration_ms IS NOT NULL"
+        )
+        .all(data.preset) as { duration_ms: number }[];
+      const losses = db
+        .query(
+          "SELECT COUNT(*) as cnt FROM game_results WHERE preset = ? AND status = 'lost'"
+        )
+        .get(data.preset) as { cnt: number };
+      if (wins.length === 0) {
+        return {
+          preset: data.preset,
+          totalWins: 0,
+          totalLosses: losses.cnt,
+          binSeconds: 5,
+          bins: [],
+          minMs: 0,
+          maxMs: 0,
+          medianMs: 0,
+          percentile: null,
+        };
+      }
+      const sortedMs = wins.map((w) => w.duration_ms).sort((a, b) => a - b);
+      const minMs = sortedMs[0];
+      const maxMs = sortedMs[sortedMs.length - 1];
+      const medianMs = sortedMs[Math.floor(sortedMs.length / 2)];
+
+      const binSeconds = 5;
+      const binWidthMs = binSeconds * 1000;
+      const binCount = Math.max(1, Math.ceil(maxMs / binWidthMs) + 1);
+      const bins = new Array<number>(binCount).fill(0);
+      for (const ms of sortedMs) {
+        const idx = Math.min(binCount - 1, Math.floor(ms / binWidthMs));
+        bins[idx]++;
+      }
+
+      let percentile: number | null = null;
+      if (typeof data.mineDurationMs === "number") {
+        const m = data.mineDurationMs;
+        /* count wins faster than (or equal to) mine — count <= gives
+           the player credit for ties so their own row doesn't push them
+           down a slot. */
+        let faster = 0;
+        for (const ms of sortedMs) {
+          if (ms <= m) faster++;
+          else break;
+        }
+        percentile = Math.round((faster / sortedMs.length) * 100);
+      }
+
+      return {
+        preset: data.preset,
+        totalWins: sortedMs.length,
+        totalLosses: losses.cnt,
+        binSeconds,
+        bins,
+        minMs,
+        maxMs,
+        medianMs,
+        percentile,
+      };
+    }
+  );
+
+/* Look up a specific game's recorded result (duration + status) for the
+   end-of-game overlay. Returns null if the game hasn't been recorded
+   yet (terminal write should land just before the client polls, but
+   the UI handles null gracefully). */
+export const getGameResult = createServerFn({ method: "GET" })
+  .validator((data: { gameId: string }) => data)
+  .handler(
+    async ({
+      data,
+    }): Promise<
+      | null
+      | {
+          preset: Preset;
+          status: "won" | "lost";
+          durationMs: number | null;
+        }
+    > => {
+      const db = getDb();
+      const row = db
+        .query(
+          "SELECT preset, status, duration_ms FROM game_results WHERE game_id = ?"
+        )
+        .get(data.gameId) as
+        | { preset: string; status: "won" | "lost"; duration_ms: number | null }
+        | null;
+      if (!row) return null;
+      return {
+        preset: row.preset as Preset,
+        status: row.status,
+        durationMs: row.duration_ms,
+      };
+    }
+  );
 
 function loadModule(moduleId: string): Module | null {
   const db = getDb();
@@ -568,6 +912,24 @@ export const releaseHold = createServerFn({ method: "POST" })
     }
   });
 
+/* Defuser-or-Expert pulls the plug — mark the bomb lost so the
+   game-over overlay fires for both players. Idempotent: if the game's
+   already in a terminal state we just no-op. */
+export const giveUpGame = createServerFn({ method: "POST" })
+  .validator((data: { gameId: string }) => data)
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const row = db
+      .query("SELECT status FROM games WHERE id = ?")
+      .get(data.gameId) as { status: string } | null;
+    if (!row) return { ok: false as const };
+    if (row.status === "active" || row.status === "waiting") {
+      db.run("UPDATE games SET status = 'lost' WHERE id = ?", [data.gameId]);
+      recordGameResult(data.gameId, "lost");
+    }
+    return { ok: true as const };
+  });
+
 export const checkTimer = createServerFn({ method: "POST" })
   .validator((data: { gameId: string }) => data)
   .handler(async ({ data }) => {
@@ -588,6 +950,7 @@ export const checkTimer = createServerFn({ method: "POST" })
     const elapsed = Math.floor(Date.now() / 1000) - gameRow.started_at;
     if (elapsed >= gameRow.timer_seconds) {
       db.run("UPDATE games SET status = 'lost' WHERE id = ?", [data.gameId]);
+      recordGameResult(data.gameId, "lost");
       return { lost: true };
     }
     return { lost: false };

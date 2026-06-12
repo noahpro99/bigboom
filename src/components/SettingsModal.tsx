@@ -9,7 +9,7 @@ import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   User,
-  Sliders,
+  Bomb,
   X,
   LogOut,
   ShieldCheck,
@@ -19,7 +19,9 @@ import {
   Music2,
   Headphones,
   Timer as TimerIcon,
+  Skull,
 } from "lucide-react";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   getBusVolume,
   setBusVolume,
@@ -30,6 +32,7 @@ import {
   type Bus,
 } from "../lib/sound";
 import { signup, login, logout, getCurrentUser } from "../server/auth";
+import { giveUpGame, getGameState } from "../server/game";
 import { getSessionId } from "../lib/session";
 
 interface SettingsModalProps {
@@ -37,10 +40,32 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-type Tab = "profile" | "audio";
+type Tab = "profile" | "audio" | "game";
 
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [tab, setTab] = useState<Tab>("profile");
+
+  /* Are we inside an ACTIVE game? The Game tab only makes sense when a
+     bomb is armed — hiding it in the lobby (status='waiting') and on the
+     game-over overlay (won/lost) prevents the "give up" path from
+     showing where it would either be premature or pointless. */
+  const params = useParams({ strict: false }) as { gameId?: string };
+  const gameId = params.gameId;
+  /* Piggy-back on the polling getGameState cache used by the game page;
+     SettingsModal lives on every page so we only enable the query when
+     we actually have a game id. */
+  const { data: gameStatus } = useQuery({
+    queryKey: ["game-status-for-settings", gameId],
+    queryFn: async () => {
+      if (!gameId) return null;
+      const state = await getGameState({ data: { gameId } });
+      return state?.game.status ?? null;
+    },
+    enabled: !!gameId && open,
+    refetchInterval: open ? 2000 : false,
+    staleTime: 1500,
+  });
+  const inGame = !!gameId && gameStatus === "active";
 
   /* Close on Escape — common modal etiquette. */
   useEffect(() => {
@@ -131,21 +156,120 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               play("menuButton");
               setTab("audio");
             }}
-            Icon={Sliders}
+            Icon={Volume2}
             label="Audio"
           />
+          {inGame && (
+            <TabButton
+              active={tab === "game"}
+              onClick={() => {
+                play("menuButton");
+                setTab("game");
+              }}
+              Icon={Bomb}
+              label="Game"
+            />
+          )}
         </div>
 
-        {/* Body — independent scroll per tab so a long Audio tab doesn't
-            wreck the Profile form layout. */}
-        <div className="flex-1 overflow-auto scrollbar-dark px-4 sm:px-6 py-5">
-          {tab === "profile" ? <ProfileTab /> : <AudioTab />}
+        {/* Body — locked to the tallest tab's height so the dialog
+            doesn't jump (and the tab strip doesn't shift up/down) when
+            switching tabs. Overflows scroll internally. */}
+        <div
+          className="overflow-auto scrollbar-dark px-4 sm:px-6 py-5"
+          style={{ height: "min(520px, calc(100vh - 12rem))" }}
+        >
+          {tab === "profile" && <ProfileTab />}
+          {tab === "audio" && <AudioTab />}
+          {tab === "game" && inGame && (
+            <GameTab gameId={params.gameId!} onClose={onClose} />
+          )}
         </div>
       </div>
     </div>
   );
 
   return createPortal(content, document.body);
+}
+
+/* ---------- Game tab ---------- */
+
+function GameTab({ gameId, onClose }: { gameId: string; onClose: () => void }) {
+  const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
+  const giveUpMut = useMutation({
+    mutationFn: giveUpGame,
+    onSuccess: () => {
+      onClose();
+      /* The game route polls and will pick up the 'lost' status on the
+         next refetch, dropping the GameOverOverlay in. No need to
+         navigate away — let the overlay handle next steps. */
+    },
+  });
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="border border-rib bg-void/40 p-4">
+        <div className="flex items-center gap-2 text-bone mb-1">
+          <Skull size={16} strokeWidth={2.2} className="text-crimson" />
+          <span className="font-stencil tracking-[0.18em] text-base">
+            ABANDON DEFUSAL
+          </span>
+        </div>
+        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-bone-dim/80 leading-relaxed mb-3">
+          Detonate the bomb and end the round for everyone in the room.
+          This cannot be undone, but you can re-arm a fresh bomb from the
+          game-over screen.
+        </p>
+
+        {!confirming ? (
+          <button
+            onClick={() => {
+              play("menuButton");
+              setConfirming(true);
+            }}
+            className="w-full border border-crimson/60 text-crimson hover:bg-crimson/10 transition-colors py-2.5 font-stencil tracking-[0.25em] text-sm uppercase"
+          >
+            Give Up
+          </button>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                play("menuButton");
+                setConfirming(false);
+              }}
+              disabled={giveUpMut.isPending}
+              className="flex-1 border border-rib text-bone-dim hover:text-bone transition-colors py-2 font-mono text-[11px] uppercase tracking-[0.22em]"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                play("explosion");
+                giveUpMut.mutate({ data: { gameId } });
+              }}
+              disabled={giveUpMut.isPending}
+              className="flex-1 bg-crimson text-bone hover:bg-crimson-bright transition-colors py-2 font-stencil text-sm tracking-[0.22em] uppercase disabled:opacity-60"
+            >
+              {giveUpMut.isPending ? "Detonating…" : "Confirm"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={() => {
+          play("menuButton");
+          onClose();
+          navigate({ to: "/" });
+        }}
+        className="border border-rib text-bone-dim hover:text-bone hover:bg-bone/5 transition-colors py-2 font-mono text-[11px] uppercase tracking-[0.22em]"
+      >
+        Leave room · back to lobby
+      </button>
+    </div>
+  );
 }
 
 function TabButton({

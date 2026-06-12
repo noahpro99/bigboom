@@ -1,5 +1,4 @@
 import { useRef, useState, useEffect } from "react";
-import { BatteryFull } from "lucide-react";
 import type { Module, ButtonModuleConfig } from "../../lib/types";
 import { play } from "../../lib/sound";
 
@@ -187,21 +186,8 @@ export function ButtonModule({
           />
         </button>
 
-        {/* Battery indicator */}
-        <div className="flex items-center gap-2 border border-steel/40 px-2.5 py-1 bg-black/30">
-          <BatteryFull size={14} className="text-bone-dim" strokeWidth={2} />
-          <div className="flex gap-1">
-            {Array.from({ length: config.batteryCount }).map((_, i) => (
-              <div
-                key={i}
-                className="w-1.5 h-3.5 bg-phosphor/80 shadow-[0_0_3px_#00f5a0]"
-              />
-            ))}
-          </div>
-          <span className="text-[10px] font-mono uppercase tracking-widest text-bone-dim">
-            x{config.batteryCount}
-          </span>
-        </div>
+        {/* Battery pack lives on the bomb chassis header now, not on
+            this module — see BatteryPanel in BombView. */}
 
         {/* LED strip */}
         {holding && (

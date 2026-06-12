@@ -1,4 +1,4 @@
-import { ChevronUp, ChevronDown, Send } from "lucide-react";
+import { ChevronUp, ChevronDown } from "lucide-react";
 import type { Module, PasswordModuleConfig } from "../../lib/types";
 import { PASSWORD_COLS, PASSWORD_LETTERS_PER_COL } from "../../lib/types";
 import { play } from "../../lib/sound";
@@ -125,9 +125,8 @@ export function PasswordModule({
       <button
         disabled={disabled || module.solved}
         onClick={submit}
-        className="btn-3d w-full py-2.5 rounded-sm font-stencil tracking-[0.3em] text-base text-bone flex items-center justify-center gap-2 disabled:opacity-60"
+        className="btn-3d w-full py-2.5 rounded-sm font-stencil tracking-[0.3em] text-base text-bone flex items-center justify-center disabled:opacity-60"
       >
-        <Send size={15} strokeWidth={2.5} />
         SUBMIT
       </button>
     </div>

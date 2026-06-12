@@ -91,6 +91,10 @@ function clamp01(v: number): number {
 
 let busVolumes: PersistedVolumes = { ...DEFAULT_VOLUMES };
 let muted = false;
+/* "Listening" mode — held by the Morse module's defuser-side AUDIO
+   button. While true, no SFX/music plays; only the synthesized morse
+   tone (which goes through a separate Web Audio path) is audible. */
+let listening = false;
 
 const cache = new Map<SoundKey, Howl>();
 const musicCache = new Map<MusicKey, Howl>();
@@ -154,7 +158,7 @@ function loadMusic(key: MusicKey): Howl {
 }
 
 export function play(key: SoundKey) {
-  if (typeof window === "undefined" || muted) return;
+  if (typeof window === "undefined" || muted || listening) return;
   const h = load(key);
   h.volume(effective(key));
   h.play();
@@ -163,7 +167,8 @@ export function play(key: SoundKey) {
 function applyMusicPlayState(key: MusicKey) {
   const h = musicCache.get(key);
   if (!h) return;
-  const wantsPlaying = activeMusic.has(key) && !muted && busVolumes.music > 0;
+  const wantsPlaying =
+    activeMusic.has(key) && !muted && !listening && busVolumes.music > 0;
   if (wantsPlaying && !h.playing()) h.play();
   else if (!wantsPlaying && h.playing()) h.pause();
 }
@@ -225,3 +230,101 @@ export function subscribeAudio(cb: () => void): () => void {
 
 /* Backwards-compat alias — older imports used subscribeMuted. */
 export const subscribeMuted = subscribeAudio;
+
+/* ----- Listen mode + synthesized morse tone -----
+   Independent Web Audio pipeline so we can produce a precisely-gated
+   tone without involving Howler. Used by the Morse module's hold-to-
+   listen button: while held, listening=true suppresses everything else
+   so the player can concentrate on the beeps. */
+
+export function setListening(on: boolean) {
+  if (listening === on) return;
+  listening = on;
+  /* When entering listening mode, pause whatever music's playing.
+     When leaving, applyAllVolumes resumes it if appropriate. */
+  applyAllVolumes();
+  listeners.forEach((l) => l());
+}
+
+export function isListening(): boolean {
+  return listening;
+}
+
+let audioCtx: AudioContext | null = null;
+let toneOsc: OscillatorNode | null = null;
+let toneGain: GainNode | null = null;
+
+function ensureAudioCtx(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  if (!audioCtx) {
+    const Ctor = (window as unknown as {
+      AudioContext?: typeof AudioContext;
+      webkitAudioContext?: typeof AudioContext;
+    }).AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctor) return null;
+    audioCtx = new Ctor();
+  }
+  /* Browsers suspend AudioContexts created before the first user
+     gesture — calling resume() here is safe after the press that
+     triggered listening mode. */
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume().catch(() => {});
+  }
+  return audioCtx;
+}
+
+/* Start a continuous tone at `audibleHz`, initially silent. Call
+   `gateMorseTone(true|false)` to switch it on/off during the morse
+   schedule. Stops any previous tone. */
+export function startMorseTone(audibleHz: number) {
+  const ctx = ensureAudioCtx();
+  if (!ctx) return;
+  stopMorseTone();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = audibleHz;
+  gain.gain.value = 0;
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  toneOsc = osc;
+  toneGain = gain;
+}
+
+const TONE_LEVEL = 0.18;
+const TONE_RAMP = 0.008; // s — short fade prevents clicks at edges
+
+export function gateMorseTone(on: boolean) {
+  if (!toneGain || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  toneGain.gain.cancelScheduledValues(t);
+  toneGain.gain.setValueAtTime(toneGain.gain.value, t);
+  toneGain.gain.linearRampToValueAtTime(on ? TONE_LEVEL : 0, t + TONE_RAMP);
+}
+
+export function stopMorseTone() {
+  if (toneGain && audioCtx) {
+    /* Fade out first to avoid a click, then disconnect. */
+    const t = audioCtx.currentTime;
+    toneGain.gain.cancelScheduledValues(t);
+    toneGain.gain.setValueAtTime(toneGain.gain.value, t);
+    toneGain.gain.linearRampToValueAtTime(0, t + TONE_RAMP);
+  }
+  if (toneOsc) {
+    try {
+      toneOsc.stop(audioCtx ? audioCtx.currentTime + TONE_RAMP * 2 : 0);
+    } catch {
+      /* already stopped */
+    }
+    toneOsc = null;
+  }
+  if (toneGain) {
+    setTimeout(() => {
+      toneGain?.disconnect();
+      toneGain = null;
+    }, 20);
+  }
+}

@@ -9,6 +9,7 @@ import { MorseModule } from "./MorseModule";
 import { PasswordModule } from "./PasswordModule";
 import { Timer } from "./Timer";
 import { ProfileButton } from "../ProfileButton";
+import { BatteryPanel } from "./BatteryPanel";
 import {
   cutWire,
   tapButton,
@@ -99,6 +100,14 @@ export function BombView({ gameState }: BombViewProps) {
 
   const disabled = game.status !== "active";
 
+  /* batteryCount is a bomb-wide attribute stamped on the Button module's
+     config (only one Button module per bomb). Pulled out here so the
+     chassis header can render the battery pack alongside the serial. */
+  const buttonMod = modules.find((m) => m.type === "button");
+  const batteryCount = buttonMod
+    ? (buttonMod.config as ButtonModuleConfig).batteryCount
+    : 0;
+
   return (
     <div className="h-full flex flex-col tx-grid relative">
       <div className="absolute top-0 left-0 right-0 h-1.5 tx-stripes opacity-90 z-10" />
@@ -130,8 +139,10 @@ export function BombView({ gameState }: BombViewProps) {
           {/* Center: timer */}
           <Timer seconds={timeRemaining} status={game.status} />
 
-          {/* Right: strikes */}
-          <div className="flex flex-col items-end gap-1">
+          {/* Right: battery pack + strikes */}
+          <div className="flex items-end gap-2 sm:gap-3">
+            <BatteryPanel count={batteryCount} />
+            <div className="flex flex-col items-end gap-1">
             <span className="hidden sm:flex text-[9px] font-stencil tracking-[0.3em] text-bone-dim uppercase items-center gap-1">
               <Skull size={10} /> STRIKES
             </span>
@@ -150,6 +161,7 @@ export function BombView({ gameState }: BombViewProps) {
                   />
                 );
               })}
+            </div>
             </div>
           </div>
         </div>

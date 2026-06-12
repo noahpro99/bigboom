@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Radio } from "lucide-react";
+import { ChevronLeft, ChevronRight, Radio, Headphones } from "lucide-react";
 import type { Module, MorseModuleConfig } from "../../lib/types";
 import { MORSE_FREQS } from "../../lib/types";
 import { encodeMorse } from "../../lib/generator";
-import { play } from "../../lib/sound";
+import {
+  play,
+  setListening,
+  startMorseTone,
+  gateMorseTone,
+  stopMorseTone,
+} from "../../lib/sound";
 
 interface MorseModuleProps {
   module: Module;
@@ -35,6 +41,17 @@ function buildSchedule(word: string): Array<{ on: boolean; ms: number }> {
   return out;
 }
 
+/* Map the dialed MHz to an audible pitch. MORSE_FREQS spans 3.505 to
+   3.600 MHz; we map that to 440 Hz (A4) — 880 Hz (A5), one octave,
+   so each frequency notch is a distinct pitch the defuser can use to
+   double-check what they're dialled to. The pitch the BEACON plays is
+   indexed off the active word's actual response frequency, not the
+   currently-dialled value — the puzzle is to find a match. */
+function audibleHzForFreq(freqIndex: number): number {
+  const t = freqIndex / Math.max(1, MORSE_FREQS.length - 1);
+  return 440 + t * 440;
+}
+
 export function MorseModule({
   module,
   disabled,
@@ -44,13 +61,24 @@ export function MorseModule({
   const config = module.config as MorseModuleConfig;
   const active = config.pool[config.activeIndex];
   const currentFreq = module.state.morseFreqIndex ?? 0;
+  const beaconHz = audibleHzForFreq(active.freqIndex);
 
-  /* Drive the flashing light by stepping through the schedule. The
-     schedule loops forever while the module is unsolved. */
+  /* ONE schedule walker drives both the LED and the audio gate so they
+     can never drift. Listening is a ref so the loop reads the latest
+     value without restarting (which would reset idx and desync from
+     the LED the Expert is also watching). */
   const [lit, setLit] = useState(false);
+  const [listening, setListeningLocal] = useState(false);
+  const listeningRef = useRef(false);
+  listeningRef.current = listening;
+  /* Mirror of the current "step.on" so startListening can immediately
+     match the audio gate to whatever phase the LED is in. */
+  const currentOnRef = useRef(false);
+
   useEffect(() => {
     if (module.solved) {
       setLit(false);
+      currentOnRef.current = false;
       return;
     }
     const schedule = buildSchedule(active.word);
@@ -62,6 +90,11 @@ export function MorseModule({
       if (cancelled) return;
       const step = schedule[idx];
       setLit(step.on);
+      currentOnRef.current = step.on;
+      /* Gate the tone every step regardless — gateMorseTone is a no-op
+         when the oscillator isn't running, so the cost is trivial and
+         the audio stays locked to the visual schedule. */
+      if (listeningRef.current) gateMorseTone(step.on);
       idx = (idx + 1) % schedule.length;
       timer = window.setTimeout(tick, step.ms);
     };
@@ -71,6 +104,33 @@ export function MorseModule({
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [active.word, module.solved]);
+
+  /* AUDIO hold button — toggle the listening ref and gate the tone to
+     match the CURRENT LED phase so the very first dot/dash the user
+     hears lines up with the light they were already watching. */
+  function startListening() {
+    if (disabled || module.solved || listening) return;
+    setListeningLocal(true);
+    setListening(true);
+    startMorseTone(beaconHz);
+    /* Sync the gate immediately to whatever phase the schedule is in. */
+    gateMorseTone(currentOnRef.current);
+  }
+  function stopListening() {
+    if (!listeningRef.current) return;
+    setListeningLocal(false);
+    stopMorseTone();
+    setListening(false);
+  }
+  /* Safety: if the component unmounts mid-press, restore audio. */
+  useEffect(() => {
+    return () => {
+      if (listeningRef.current) {
+        stopMorseTone();
+        setListening(false);
+      }
+    };
+  }, []);
 
   function step(delta: number) {
     if (disabled || module.solved) return;
@@ -121,8 +181,8 @@ export function MorseModule({
         </div>
       </div>
 
-      {/* Flashing lamp */}
-      <div className="mx-auto mb-4 flex flex-col items-center">
+      {/* Flashing lamp + hold-to-listen audio button on its right. */}
+      <div className="mx-auto mb-4 flex items-center justify-center gap-3">
         <div
           className="w-12 h-12 rounded-full transition-all duration-75"
           style={{
@@ -134,6 +194,36 @@ export function MorseModule({
               : "inset 0 2px 4px rgba(0,0,0,0.7), 0 0 0 3px rgba(0,0,0,0.7), 0 0 0 5px rgba(80,100,140,0.18)",
           }}
         />
+        <button
+          /* Pointer events instead of onMouseDown/Up so touch + mouse +
+             pen all work the same. */
+          disabled={disabled || module.solved}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+            startListening();
+          }}
+          onPointerUp={(e) => {
+            e.preventDefault();
+            stopListening();
+          }}
+          onPointerCancel={() => stopListening()}
+          onPointerLeave={(e) => {
+            /* If they slid off without releasing, stop too. Pointer
+               capture should prevent this for touch, but mouse can
+               escape if e.preventDefault didn't latch. */
+            if (e.pointerType !== "touch") stopListening();
+          }}
+          aria-label="Hold to listen to morse beacon"
+          className={`btn-3d px-3 py-2 rounded-sm flex items-center gap-1.5 font-stencil text-[12px] tracking-[0.2em] select-none disabled:opacity-50 ${
+            listening
+              ? "btn-3d-armed text-phosphor"
+              : "text-bone"
+          }`}
+        >
+          <Headphones size={14} strokeWidth={2.4} />
+          AUDIO
+        </button>
       </div>
 
       {/* Frequency dial */}
@@ -156,6 +246,13 @@ export function MorseModule({
               }`}
             >
               {MORSE_FREQS[currentFreq].toFixed(3)}
+            </span>
+            <span
+              className={`led-timer text-xs ml-1 ${
+                module.solved ? "led-glow-green" : "led-glow-amber"
+              }`}
+            >
+              MHz
             </span>
           </div>
           <button

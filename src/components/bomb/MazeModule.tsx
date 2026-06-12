@@ -1,7 +1,13 @@
 import { useEffect } from "react";
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Module, MazeModuleConfig, Direction, MazeCell } from "../../lib/types";
-import { MAZE_SIZE } from "../../lib/types";
+import {
+  MAZE_SIZE,
+  MAZE_W_N,
+  MAZE_W_E,
+  MAZE_W_S,
+  MAZE_W_W,
+} from "../../lib/types";
 import { play } from "../../lib/sound";
 
 interface MazeModuleProps {
@@ -10,12 +16,12 @@ interface MazeModuleProps {
   onMove: (direction: Direction) => void;
 }
 
-/* Render only the cells the player needs to find their maze:
-   - The 2 green identification markers
-   - The current position (white circle, drawn at the live `mazePos`)
-   - The goal (red triangle)
-   The walls themselves are NOT drawn on the bomb — that's the
-   manual's job. The player has to ID the maze from the markers. */
+/* The bomb-side maze: one SVG drawing the defuser's share of walls
+   (~33%), the 2 green markers, the trail of visited cells, the goal
+   triangle, and the current-position circle. Layering everything in one
+   coordinate system means a cell containing several items (e.g. the
+   defuser standing on a marker, or the current position equal to a
+   trail cell) stays perfectly centred — no flexbox stacking weirdness. */
 export function MazeModule({ module, disabled, onMove }: MazeModuleProps) {
   const config = module.config as MazeModuleConfig;
   const active = config.pool[config.activeIndex];
@@ -34,8 +40,6 @@ export function MazeModule({ module, disabled, onMove }: MazeModuleProps) {
     ? "bg-crimson shadow-[0_0_8px_#e0245e] led-glow-red"
     : "bg-amber-glow shadow-[0_0_6px_#ffaa3a] pulse-dot";
 
-  /* Keyboard movement — feels native for this kind of module.
-     Defuser tab only; if disabled, do nothing. */
   useEffect(() => {
     if (disabled || module.solved) return;
     function onKey(e: KeyboardEvent) {
@@ -63,12 +67,6 @@ export function MazeModule({ module, disabled, onMove }: MazeModuleProps) {
     onMove(dir);
   }
 
-  /* Visual size — fit into the module without overrunning. */
-  const cells = Array.from({ length: MAZE_SIZE * MAZE_SIZE }, (_, i) => ({
-    x: i % MAZE_SIZE,
-    y: Math.floor(i / MAZE_SIZE),
-  }));
-
   return (
     <div className={`bezel relative border ${borderColor} rounded-sm p-5 pt-7`}>
       <span className="screw top-1.5 left-1.5" />
@@ -89,85 +87,15 @@ export function MazeModule({ module, disabled, onMove }: MazeModuleProps) {
         </div>
       </div>
 
-      {/* The display — dotted grid of cells, no walls drawn. */}
-      <div className="mx-auto bg-black/60 border border-steel/40 p-2 rounded-sm">
-        <div
-          className="grid gap-[2px]"
-          style={{ gridTemplateColumns: `repeat(${MAZE_SIZE}, 1fr)` }}
-        >
-          {cells.map(({ x, y }) => {
-            const isMarker = active.markers.some(
-              (m) => m.x === x && m.y === y
-            );
-            const isCurrent = currentPos.x === x && currentPos.y === y;
-            const isGoal = config.goal.x === x && config.goal.y === y;
-            const isTrail =
-              !isCurrent &&
-              trail.some((t) => t.x === x && t.y === y);
-
-            return (
-              <div
-                key={`${x}-${y}`}
-                className="aspect-square relative bg-zinc-950 border border-steel/15 flex items-center justify-center"
-              >
-                {/* Dotted-grid hint — tiny pip in the centre of every cell so
-                    the grid reads as a 6×6 board even when most cells are empty. */}
-                {!isMarker && !isCurrent && !isGoal && !isTrail && (
-                  <span className="w-[3px] h-[3px] rounded-full bg-steel/40" />
-                )}
-                {isTrail && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-phosphor/40" />
-                )}
-                {isMarker && !isCurrent && !isGoal && (
-                  <span
-                    className="w-3/4 h-3/4 rounded-full"
-                    style={{
-                      background:
-                        "radial-gradient(circle at 35% 30%, #6dffaf 0%, #14b86b 60%, #094a2a 100%)",
-                      boxShadow:
-                        "0 0 6px #14b86b, inset 0 1px 0 rgba(255,255,255,0.45)",
-                    }}
-                  />
-                )}
-                {isCurrent && (
-                  <span
-                    className="w-3/4 h-3/4 rounded-full"
-                    style={{
-                      background:
-                        "radial-gradient(circle at 32% 28%, #ffffff 0%, #d6d6d6 55%, #7c7c7c 100%)",
-                      boxShadow:
-                        "0 0 8px rgba(255,255,255,0.65), inset 0 1px 0 rgba(255,255,255,0.7), inset 0 -1px 0 rgba(0,0,0,0.5)",
-                    }}
-                  />
-                )}
-                {isGoal && (
-                  <svg
-                    viewBox="0 0 10 10"
-                    className="w-3/4 h-3/4"
-                    style={{
-                      filter:
-                        "drop-shadow(0 0 5px #ff3d6e) drop-shadow(0 1px 0 rgba(0,0,0,0.6))",
-                    }}
-                  >
-                    <polygon
-                      points="5,1 9,9 1,9"
-                      fill="url(#goalGrad)"
-                      stroke="#ff7088"
-                      strokeWidth="0.4"
-                    />
-                    <defs>
-                      <linearGradient id="goalGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#ff8aa3" />
-                        <stop offset="55%" stopColor="#e0245e" />
-                        <stop offset="100%" stopColor="#8b0e2c" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                )}
-              </div>
-            );
-          })}
-        </div>
+      <div className="mx-auto bg-black/65 border border-steel/40 p-2 rounded-sm">
+        <MazeBoard
+          walls={active.walls}
+          defuserWalls={active.defuserWalls}
+          markers={active.markers}
+          current={currentPos}
+          goal={config.goal}
+          trail={trail}
+        />
       </div>
 
       {/* D-pad */}
@@ -211,5 +139,193 @@ export function MazeModule({ module, disabled, onMove }: MazeModuleProps) {
         <div />
       </div>
     </div>
+  );
+}
+
+function MazeBoard({
+  walls,
+  defuserWalls,
+  markers,
+  current,
+  goal,
+  trail,
+}: {
+  walls: number[];
+  defuserWalls: number[];
+  markers: readonly MazeCell[];
+  current: MazeCell;
+  goal: MazeCell;
+  trail: readonly MazeCell[];
+}) {
+  const CELL = 30;
+  const PAD = 4;
+  const size = MAZE_SIZE * CELL + PAD * 2;
+  const cellCenter = (c: MazeCell) => ({
+    cx: PAD + c.x * CELL + CELL / 2,
+    cy: PAD + c.y * CELL + CELL / 2,
+  });
+
+  /* Build the wall lines once: dim every cell border as a faint grid
+     hint, then over-draw bright lines for the walls the defuser owns.
+     Each shared edge appears in two cells' bitmasks but we render only
+     the N and W walls per cell (S/E come from the neighbour) to dedupe. */
+  const gridLines: React.ReactNode[] = [];
+  const wallLines: React.ReactNode[] = [];
+  for (let y = 0; y < MAZE_SIZE; y++) {
+    for (let x = 0; x < MAZE_SIZE; x++) {
+      const idx = y * MAZE_SIZE + x;
+      const w = walls[idx];
+      const d = defuserWalls[idx];
+      const x0 = PAD + x * CELL;
+      const y0 = PAD + y * CELL;
+      const x1 = x0 + CELL;
+      const y1 = y0 + CELL;
+
+      /* faint cell grid (every cell side, even where no wall) */
+      if (y === 0) {
+        gridLines.push(<line key={`g-t-${x}`} x1={x0} y1={y0} x2={x1} y2={y0} stroke="#1a2333" strokeWidth="1" />);
+      }
+      if (x === 0) {
+        gridLines.push(<line key={`g-l-${y}`} x1={x0} y1={y0} x2={x0} y2={y1} stroke="#1a2333" strokeWidth="1" />);
+      }
+      gridLines.push(<line key={`g-b-${x}-${y}`} x1={x0} y1={y1} x2={x1} y2={y1} stroke="#1a2333" strokeWidth="1" />);
+      gridLines.push(<line key={`g-r-${x}-${y}`} x1={x1} y1={y0} x2={x1} y2={y1} stroke="#1a2333" strokeWidth="1" />);
+
+      /* Defuser-visible walls — only the actually-present ones. */
+      if (w & d & MAZE_W_N) {
+        wallLines.push(
+          <line key={`d-n-${x}-${y}`} x1={x0} y1={y0} x2={x1} y2={y0} stroke="#f5f1e8" strokeWidth="2.4" strokeLinecap="square" />
+        );
+      }
+      if (w & d & MAZE_W_W) {
+        wallLines.push(
+          <line key={`d-w-${x}-${y}`} x1={x0} y1={y0} x2={x0} y2={y1} stroke="#f5f1e8" strokeWidth="2.4" strokeLinecap="square" />
+        );
+      }
+      /* Outer south/east borders need their own draw — no neighbour
+         "north/west" rendering will cover them. */
+      if (y === MAZE_SIZE - 1 && w & d & MAZE_W_S) {
+        wallLines.push(
+          <line key={`d-s-${x}-${y}`} x1={x0} y1={y1} x2={x1} y2={y1} stroke="#f5f1e8" strokeWidth="2.4" strokeLinecap="square" />
+        );
+      }
+      if (x === MAZE_SIZE - 1 && w & d & MAZE_W_E) {
+        wallLines.push(
+          <line key={`d-e-${x}-${y}`} x1={x1} y1={y0} x2={x1} y2={y1} stroke="#f5f1e8" strokeWidth="2.4" strokeLinecap="square" />
+        );
+      }
+    }
+  }
+
+  /* Layering order, bottom → top:
+     1. dim cell grid
+     2. trail dots
+     3. markers
+     4. defuser walls (so walls overlay markers when they coincide)
+     5. goal triangle
+     6. current position */
+  const markerEls = markers.map((m, i) => {
+    const { cx, cy } = cellCenter(m);
+    return (
+      <circle
+        key={`mk-${i}`}
+        cx={cx}
+        cy={cy}
+        r={CELL * 0.32}
+        fill="url(#mkGrad)"
+        stroke="#0a4626"
+        strokeWidth="0.6"
+      />
+    );
+  });
+
+  const trailEls = trail.map((c, i) => {
+    if (c.x === current.x && c.y === current.y) return null;
+    const { cx, cy } = cellCenter(c);
+    return (
+      <circle
+        key={`tr-${i}`}
+        cx={cx}
+        cy={cy}
+        r={CELL * 0.12}
+        fill="#00f5a0"
+        opacity={0.45}
+      />
+    );
+  });
+
+  const goalCenter = cellCenter(goal);
+  const goalR = CELL * 0.32;
+  const goalEl = (
+    <polygon
+      points={[
+        `${goalCenter.cx},${goalCenter.cy - goalR}`,
+        `${goalCenter.cx + goalR * 0.9},${goalCenter.cy + goalR * 0.7}`,
+        `${goalCenter.cx - goalR * 0.9},${goalCenter.cy + goalR * 0.7}`,
+      ].join(" ")}
+      fill="url(#goalGrad)"
+      stroke="#ff7088"
+      strokeWidth="0.8"
+      filter="url(#goalGlow)"
+    />
+  );
+
+  const currentCenter = cellCenter(current);
+  const currentEl = (
+    <circle
+      cx={currentCenter.cx}
+      cy={currentCenter.cy}
+      r={CELL * 0.3}
+      fill="url(#curGrad)"
+      stroke="#ffffff"
+      strokeWidth="0.6"
+      filter="url(#curGlow)"
+    />
+  );
+
+  return (
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      className="w-full h-auto block"
+      style={{ background: "#050a14" }}
+    >
+      <defs>
+        <radialGradient id="mkGrad" cx="35%" cy="30%" r="70%">
+          <stop offset="0%" stopColor="#6dffaf" />
+          <stop offset="60%" stopColor="#14b86b" />
+          <stop offset="100%" stopColor="#094a2a" />
+        </radialGradient>
+        <linearGradient id="goalGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#ff8aa3" />
+          <stop offset="55%" stopColor="#e0245e" />
+          <stop offset="100%" stopColor="#8b0e2c" />
+        </linearGradient>
+        <radialGradient id="curGrad" cx="32%" cy="28%" r="70%">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="55%" stopColor="#d6d6d6" />
+          <stop offset="100%" stopColor="#7c7c7c" />
+        </radialGradient>
+        <filter id="curGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="0.9" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <filter id="goalGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="0.9" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      {gridLines}
+      {trailEls}
+      {markerEls}
+      {wallLines}
+      {goalEl}
+      {currentEl}
+    </svg>
   );
 }

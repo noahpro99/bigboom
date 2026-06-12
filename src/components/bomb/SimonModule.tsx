@@ -31,45 +31,38 @@ export function SimonModule({ module, disabled, onPress }: SimonModuleProps) {
   const pressedCount = module.state.simonPressed ?? 0;
   const total = config.sequence.length;
 
-  // Cycle through the flash sequence continuously. The pad whose colour
-  // matches the current flash lights up; everything else stays dim. A
-  // longer pause between full cycles makes it easier to track the start.
-  const [flashIdx, setFlashIdx] = useState<number>(0);
+  /* Only flash the CURRENT target on repeat. Earlier the loop cycled
+     through every colour in the sequence, which made it ambiguous which
+     one the defuser was supposed to substitute for — the expert would
+     read a sub for the right index, but the defuser would be pressing
+     in time with whatever was flashing right now. Now the bomb shows
+     exactly the colour the next press is meant to translate. */
   const [lit, setLit] = useState<boolean>(false);
-  const litRef = useRef(false);
-  litRef.current = lit;
-
   useEffect(() => {
-    if (module.solved) return;
+    if (module.solved || pressedCount >= total) {
+      setLit(false);
+      return;
+    }
     let cancelled = false;
-    let idx = 0;
+    let on = false;
     let timer: number | undefined;
-
-    const ON_MS = 480;
-    const OFF_MS = 280;
-    const CYCLE_GAP_MS = 1100;
-
-    const step = () => {
+    const ON_MS = 520;
+    const OFF_MS = 720;
+    const tick = () => {
       if (cancelled) return;
-      if (!litRef.current) {
-        setFlashIdx(idx);
-        setLit(true);
-        litRef.current = true;
-        timer = window.setTimeout(step, ON_MS);
-      } else {
-        setLit(false);
-        litRef.current = false;
-        const wrap = idx === total - 1;
-        idx = (idx + 1) % total;
-        timer = window.setTimeout(step, wrap ? CYCLE_GAP_MS : OFF_MS);
-      }
+      on = !on;
+      setLit(on);
+      timer = window.setTimeout(tick, on ? ON_MS : OFF_MS);
     };
-    timer = window.setTimeout(step, 600);
+    /* Brief pause before the first flash so a fresh press doesn't
+       immediately trigger the new colour — gives a clear "OK new
+       target" beat. */
+    timer = window.setTimeout(tick, 320);
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [module.solved, total]);
+  }, [module.solved, pressedCount, total]);
 
   // Brief local highlight on tap (in addition to whatever the server says).
   const [tapped, setTapped] = useState<SimonColor | null>(null);
@@ -84,7 +77,8 @@ export function SimonModule({ module, disabled, onPress }: SimonModuleProps) {
     onPress(color);
   }
 
-  const flashing: SimonColor | null = lit ? config.sequence[flashIdx] : null;
+  const target: SimonColor | undefined = config.sequence[pressedCount];
+  const flashing: SimonColor | null = lit && target ? target : null;
 
   const borderColor = module.solved
     ? "border-phosphor/50"
@@ -141,15 +135,21 @@ export function SimonModule({ module, disabled, onPress }: SimonModuleProps) {
           ([1, 2, 3] as const).map((col) => {
             const color = COLORS.find((c) => POS[c].row === row && POS[c].col === col);
             if (!color) {
-              // Centre cell: a decorative chassis filler. Progress is
-              // surfaced by the pip row in the header, so no text needed.
+              // Centre cell: position readout — which flash in the
+              // sequence the defuser is on. Removes the "which one am
+              // I supposed to press?" ambiguity.
               if (row === 2 && col === 2) {
                 return (
                   <div
                     key={`${row}-${col}`}
-                    className="aspect-square flex items-center justify-center border border-steel/35 bg-black/55 rounded-sm"
+                    className="aspect-square flex flex-col items-center justify-center border border-steel/35 bg-black/65 rounded-sm"
                   >
-                    <span className="w-1.5 h-1.5 rounded-full bg-steel/60" />
+                    <span className="text-[8px] font-mono uppercase tracking-[0.25em] text-bone-dim/70 leading-none">
+                      Flash
+                    </span>
+                    <span className="font-stencil text-lg text-amber-glow leading-none mt-0.5 tabular-nums">
+                      {Math.min(pressedCount + 1, total)}/{total}
+                    </span>
                   </div>
                 );
               }

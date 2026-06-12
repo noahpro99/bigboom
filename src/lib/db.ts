@@ -20,7 +20,9 @@ export function getDb(): Database {
       started_at INTEGER,
       strikes INTEGER DEFAULT 0,
       max_strikes INTEGER DEFAULT 3,
-      created_at INTEGER DEFAULT (unixepoch())
+      created_at INTEGER DEFAULT (unixepoch()),
+      preset TEXT NOT NULL DEFAULT 'standard',
+      module_set TEXT NOT NULL DEFAULT 'wire,button,symbols,simon,memory,morse'
     );
 
     CREATE TABLE IF NOT EXISTS game_players (
@@ -74,7 +76,41 @@ export function getDb(): Database {
       created_at INTEGER DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+
+    /* Game results — one row per terminal game, used to build the
+       end-of-game distribution histogram for preset games. Custom
+       games are still recorded (preset='custom') but excluded from
+       the public stats by the query side. */
+    CREATE TABLE IF NOT EXISTS game_results (
+      game_id TEXT PRIMARY KEY,
+      preset TEXT NOT NULL,
+      timer_seconds INTEGER NOT NULL,
+      module_set TEXT NOT NULL,
+      status TEXT NOT NULL,
+      duration_ms INTEGER,
+      completed_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_game_results_preset_status
+      ON game_results(preset, status);
   `);
+
+  /* Idempotent migrations for the games table — CREATE TABLE IF NOT
+     EXISTS doesn't add new columns to an existing table, so ALTER on
+     boot and swallow "duplicate column" errors. */
+  const ensureColumn = (column: string, ddl: string) => {
+    try {
+      _db!.exec(`ALTER TABLE games ADD COLUMN ${column} ${ddl};`);
+    } catch (e) {
+      /* sqlite throws if the column already exists; that's fine. */
+      const msg = (e as Error).message ?? "";
+      if (!/duplicate column/i.test(msg)) throw e;
+    }
+  };
+  ensureColumn("preset", "TEXT NOT NULL DEFAULT 'standard'");
+  ensureColumn(
+    "module_set",
+    "TEXT NOT NULL DEFAULT 'wire,button,symbols,simon,memory,morse'"
+  );
 
   return _db;
 }
