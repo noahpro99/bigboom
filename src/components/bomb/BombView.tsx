@@ -12,7 +12,12 @@ import {
 } from "../../server/game";
 import { useDisplayTime } from "../../lib/useDisplayTime";
 import { play } from "../../lib/sound";
-import type { GameState, Module } from "../../lib/types";
+import { checkReleaseTiming } from "../../lib/generator";
+import type {
+  GameState,
+  Module,
+  ButtonModuleConfig,
+} from "../../lib/types";
 import { Skull, Wifi, Activity } from "lucide-react";
 
 interface BombViewProps {
@@ -152,15 +157,17 @@ export function BombView({ gameState }: BombViewProps) {
                       startMut.mutate({ data: { moduleId: mod.id } })
                     }
                     onHoldRelease={() => {
-                      // Send exactly the value that was on screen at the last
-                      // tick (useDisplayTime returns the floored integer the
-                      // user sees). Avoids any rounding mismatch between
-                      // display and validation.
+                      // Client-side validation — the client has the module
+                      // config (so it knows the rule) and the exact value the
+                      // user just saw, so it decides correctness and tells
+                      // the server the verdict.
+                      const cfg = mod.config as ButtonModuleConfig;
+                      const correct = checkReleaseTiming(cfg, timeRemaining);
                       releaseMut.mutate({
                         data: {
                           gameId: game.id,
                           moduleId: mod.id,
-                          clientRemaining: timeRemaining,
+                          correct,
                         },
                       });
                     }}

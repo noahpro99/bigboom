@@ -9,7 +9,6 @@ import {
   generateSerialNumber,
   getWireSolution,
   getButtonAction,
-  checkReleaseTiming,
   getSymbolsSolution,
 } from "../lib/generator";
 import type {
@@ -467,68 +466,25 @@ export const startHold = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// Defuser releases the held button — validate timing.
-// `clientRemaining` is the number of seconds the Defuser saw at the moment of
-// release. We trust it (within a small sanity bound versus our own clock) to
-// avoid network-latency strikes where the timer has ticked off between click
-// and HTTP arrival.
+// Defuser releases the held button. The client owns the verdict here — it
+// knows the rule (it's in the module config) and the timer it just displayed
+// to the user, so server-side timing checks only led to off-by-one latency
+// strikes. We trust the client's `correct` boolean and just record it.
 export const releaseHold = createServerFn({ method: "POST" })
   .validator(
-    (data: {
-      gameId: string;
-      moduleId: string;
-      clientRemaining?: number;
-    }) => data
+    (data: { gameId: string; moduleId: string; correct: boolean }) => data
   )
   .handler(async ({ data }) => {
     const db = getDb();
     const mod = loadModule(data.moduleId);
     if (!mod || mod.solved) return { ok: false };
 
-    // If the button was supposed to be tapped (not held), holding then releasing is wrong
-    const config = mod.config as ButtonModuleConfig;
-    if (getButtonAction(config) === "tap") {
-      db.run("UPDATE modules SET state_json = ?, struck = 1 WHERE id = ?", [
-        JSON.stringify({ ...mod.state, isHolding: false }),
-        data.moduleId,
-      ]);
-      const { lost } = applyStrike(data.gameId);
-      return { ok: true, correct: false, lost };
-    }
-
-    // Determine current bomb timer
-    const gameRow = db
-      .query(
-        "SELECT timer_seconds, started_at, status FROM games WHERE id = ?"
-      )
-      .get(data.gameId) as {
-      timer_seconds: number;
-      started_at: number | null;
-      status: string;
-    };
-    let timeRemaining = gameRow.timer_seconds;
-    if (gameRow.started_at && gameRow.status === "active") {
-      const elapsed = Math.floor(Date.now() / 1000) - gameRow.started_at;
-      timeRemaining = Math.max(0, gameRow.timer_seconds - elapsed);
-    }
-
-    // Prefer the client's reported time-at-click (within a 3s sanity bound)
-    // so that HTTP latency between the click and the server check doesn't
-    // make the timer's last digit advance under the user's feet.
-    const reported = data.clientRemaining;
-    const checkAt =
-      typeof reported === "number" && Math.abs(reported - timeRemaining) <= 3
-        ? Math.floor(reported)
-        : timeRemaining;
-
-    const correct = checkReleaseTiming(config, checkAt);
-
     db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
       JSON.stringify({ ...mod.state, isHolding: false }),
       data.moduleId,
     ]);
 
-    if (correct) {
+    if (data.correct) {
       db.run("UPDATE modules SET solved = 1 WHERE id = ?", [data.moduleId]);
       checkAllSolved(data.gameId);
       return { ok: true, correct: true };
