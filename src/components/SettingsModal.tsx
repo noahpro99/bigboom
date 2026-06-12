@@ -5,6 +5,7 @@ import {
   useSyncExternalStore,
   type FormEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   User,
@@ -63,12 +64,16 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   if (!open) return null;
 
-  return (
-    /* Backdrop — dark vignette, click anywhere outside the dialog to close.
-       z-50 keeps the modal above all the page chrome (the floating
-       Profile button itself is z-30). */
+  /* Portal to document.body so the modal isn't trapped in whatever
+     stacking context its trigger button happens to live in (e.g. the
+     BombView chassis header has its own z-20 context, which previously
+     stopped z-50 from putting the modal above the bomb modules and
+     silently swallowed clicks). SSR-safe via the typeof check. */
+  if (typeof document === "undefined") return null;
+
+  const content = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8"
+      className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-8"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -77,15 +82,18 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         className="absolute inset-0 backdrop-blur-sm"
         style={{
           background:
-            "radial-gradient(ellipse at center, rgba(5,10,20,0.78) 0%, rgba(5,10,20,0.95) 80%)",
+            "radial-gradient(ellipse at center, rgba(5,10,20,0.82) 0%, rgba(5,10,20,0.97) 80%)",
         }}
         onMouseDown={onClose}
       />
 
       {/* Dialog — same chassis-with-stripes look as the lobby. */}
       <div
-        className="relative w-full max-w-lg bg-chassis border border-rib shadow-2xl flex flex-col reveal"
-        style={{ maxHeight: "calc(100vh - 4rem)" }}
+        className="relative z-[101] w-full max-w-lg bg-chassis border border-rib shadow-2xl flex flex-col reveal"
+        style={{
+          maxHeight: "calc(100vh - 4rem)",
+          backgroundColor: "var(--color-chassis)",
+        }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="absolute top-0 left-0 right-0 h-1 tx-stripes opacity-80" />
@@ -136,6 +144,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       </div>
     </div>
   );
+
+  return createPortal(content, document.body);
 }
 
 function TabButton({
