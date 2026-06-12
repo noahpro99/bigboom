@@ -152,20 +152,15 @@ export function BombView({ gameState }: BombViewProps) {
                       startMut.mutate({ data: { moduleId: mod.id } })
                     }
                     onHoldRelease={() => {
-                      // Compute time-remaining at the exact click moment so the
-                      // server can verify against the same second the player saw,
-                      // not the ~half-second-later instant the request lands.
-                      const live = game.startedAt
-                        ? Math.max(
-                            0,
-                            game.startedAt + game.timerSeconds - Date.now() / 1000
-                          )
-                        : timeRemaining;
+                      // Send exactly the value that was on screen at the last
+                      // tick (useDisplayTime returns the floored integer the
+                      // user sees). Avoids any rounding mismatch between
+                      // display and validation.
                       releaseMut.mutate({
                         data: {
                           gameId: game.id,
                           moduleId: mod.id,
-                          clientRemaining: Math.floor(live),
+                          clientRemaining: timeRemaining,
                         },
                       });
                     }}

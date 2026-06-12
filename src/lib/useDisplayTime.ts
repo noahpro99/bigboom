@@ -27,6 +27,10 @@ export function useDisplayTime(
 
   if (!mounted || status !== "active" || !startedAt) return serverRemaining;
 
+  // Floor (not round) so the countdown behaves like a stopwatch — a displayed
+  // "9" means the actual remaining is in [9, 10). The button-release check on
+  // the server compares against the SAME integer the user saw, so this needs
+  // to match the floor used in BombView's onHoldRelease.
   const now = Date.now() / 1000;
-  return Math.max(0, Math.round(startedAt + timerSeconds - now));
+  return Math.max(0, Math.floor(startedAt + timerSeconds - now));
 }
