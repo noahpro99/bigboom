@@ -4,7 +4,7 @@ export type ButtonLabel = "ABORT" | "DETONATE" | "HOLD" | "PRESS";
 export type StripColor = "red" | "blue" | "yellow" | "white";
 export type GameStatus = "waiting" | "active" | "won" | "lost";
 export type PlayerRole = "defuser" | "expert";
-export type ModuleType = "wire" | "button";
+export type ModuleType = "wire" | "button" | "symbols";
 
 // A slot is a position on the wire module. It either holds a coloured wire or
 // is empty. Slots count from position 1 at the top.
@@ -70,6 +70,22 @@ export interface StripRule {
   releaseValue: number;
 }
 
+// One procedurally-generated glyph.
+// paths are SVG path `d` strings drawn inside a 0 0 100 100 viewBox.
+export interface GeneratedSymbol {
+  id: string;      // stable identifier used for client/server validation
+  paths: string[]; // SVG path strings (drawn at viewBox 0..100)
+}
+
+export interface SymbolsModuleConfig {
+  // 4-8 columns of symbols. Every symbol is globally unique, so the 4 active
+  // ones uniquely identify which column they came from.
+  columns: GeneratedSymbol[][];
+  // Exactly 4 symbols shown on the bomb, in the (random) visual order they
+  // appear on the device. They all live in exactly one of `columns`.
+  activeSymbols: GeneratedSymbol[];
+}
+
 export interface ButtonModuleConfig {
   color: ButtonColor;
   label: ButtonLabel;
@@ -87,6 +103,7 @@ export interface ModuleState {
   cutWires?: number[];
   isHolding?: boolean;
   solved?: boolean;
+  pressedIds?: string[]; // symbols module: ids correctly pressed so far (in order)
 }
 
 export interface Module {
@@ -94,7 +111,7 @@ export interface Module {
   gameId: string;
   type: ModuleType;
   position: number;
-  config: WireModuleConfig | ButtonModuleConfig;
+  config: WireModuleConfig | ButtonModuleConfig | SymbolsModuleConfig;
   state: ModuleState;
   solved: boolean;
   struck: boolean;
@@ -117,6 +134,7 @@ export interface GameState {
   players: { role: PlayerRole; joinedAt: number }[];
   modules: Module[];
   timeRemaining: number;
+  myRole: PlayerRole | null;
 }
 
 export interface ManualPage {
@@ -133,4 +151,5 @@ export interface ManualSection {
 export type ManualContent =
   | { type: "paragraph"; text: string }
   | { type: "table"; headers: string[]; rows: string[][] }
-  | { type: "rule"; condition: string; action: string };
+  | { type: "rule"; condition: string; action: string }
+  | { type: "symbolColumns"; columns: GeneratedSymbol[][] };

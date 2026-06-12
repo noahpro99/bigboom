@@ -1,13 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { WireModule } from "./WireModule";
 import { ButtonModule } from "./ButtonModule";
+import { SymbolsModule } from "./SymbolsModule";
 import { Timer } from "./Timer";
 import {
   cutWire,
   tapButton,
   startHold,
   releaseHold,
+  pressSymbol,
 } from "../../server/game";
+import { useDisplayTime } from "../../lib/useDisplayTime";
 import type { GameState, Module } from "../../lib/types";
 import { Skull, Wifi, Activity } from "lucide-react";
 
@@ -17,7 +20,13 @@ interface BombViewProps {
 
 export function BombView({ gameState }: BombViewProps) {
   const qc = useQueryClient();
-  const { game, modules, timeRemaining } = gameState;
+  const { game, modules } = gameState;
+  const timeRemaining = useDisplayTime(
+    game.startedAt,
+    game.timerSeconds,
+    gameState.timeRemaining,
+    game.status
+  );
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ["game", game.id] });
 
@@ -28,6 +37,7 @@ export function BombView({ gameState }: BombViewProps) {
     mutationFn: releaseHold,
     onSuccess: invalidate,
   });
+  const pressMut = useMutation({ mutationFn: pressSymbol, onSuccess: invalidate });
 
   const disabled = game.status !== "active";
 
@@ -97,7 +107,7 @@ export function BombView({ gameState }: BombViewProps) {
       </div>
 
       {/* Bomb body — module grid */}
-      <div className="flex-1 overflow-auto px-4 sm:px-6 py-5 sm:py-8 relative">
+      <div className="flex-1 overflow-auto scrollbar-dark px-4 sm:px-6 py-5 sm:py-8 relative">
         <div className="max-w-3xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {modules.map((mod: Module) => {
@@ -132,6 +142,20 @@ export function BombView({ gameState }: BombViewProps) {
                     onHoldRelease={() =>
                       releaseMut.mutate({
                         data: { gameId: game.id, moduleId: mod.id },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'symbols') {
+                return (
+                  <SymbolsModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onPress={(symbolId) =>
+                      pressMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id, symbolId },
                       })
                     }
                   />

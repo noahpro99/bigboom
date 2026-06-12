@@ -11,6 +11,7 @@ import {
 } from "../server/game";
 import { BombView } from "../components/bomb/BombView";
 import { ManualView } from "../components/manual/ManualView";
+import { getSessionId } from "../lib/session";
 import type { PlayerRole } from "../lib/types";
 import {
   Bomb,
@@ -26,30 +27,46 @@ import {
   Skull,
 } from "lucide-react";
 
-export const Route = createFileRoute("/game/$gameId/$role")({
+export const Route = createFileRoute("/game/$gameId")({
   component: GamePage,
 });
 
 function GamePage() {
-  const { gameId, role } = Route.useParams();
-  const playerRole = role as PlayerRole;
+  const { gameId } = Route.useParams();
   const qc = useQueryClient();
   const navigate = useNavigate();
 
-  const { data: gameState, isLoading, error } = useQuery({
-    queryKey: ["game", gameId, playerRole],
-    queryFn: () => getGameState({ data: { gameId, role: playerRole } }),
+  const [sessionId, setSessionId] = useState<string>("");
+  useEffect(() => {
+    setSessionId(getSessionId());
+  }, []);
+
+  const { data: gameState, error, isFetched } = useQuery({
+    queryKey: ["game", gameId, sessionId],
+    queryFn: () => getGameState({ data: { gameId, sessionId } }),
     refetchInterval: 1500,
+    enabled: !!sessionId,
   });
+
+  // The server is the source of truth for which role this session has.
+  const playerRole: PlayerRole = gameState?.myRole ?? "defuser";
 
   const joinMut = useMutation({
     mutationFn: joinGame,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["game", gameId] }),
   });
 
+  const [startError, setStartError] = useState<string | null>(null);
   const startMut = useMutation({
     mutationFn: startGame,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["game", gameId] }),
+    onSuccess: (result) => {
+      if (result && "error" in result && result.error) {
+        setStartError(result.error);
+      } else {
+        setStartError(null);
+      }
+      qc.invalidateQueries({ queryKey: ["game", gameId] });
+    },
   });
 
   const checkTimerMut = useMutation({
@@ -68,13 +85,9 @@ function GamePage() {
   });
 
   async function pickRole(target: PlayerRole) {
-    if (target === playerRole) return;
+    if (target === playerRole || !sessionId) return;
     await switchRoleMut.mutateAsync({
-      data: { gameId, fromRole: playerRole, toRole: target },
-    });
-    await navigate({
-      to: "/game/$gameId/$role",
-      params: { gameId, role: target },
+      data: { gameId, sessionId, toRole: target },
     });
   }
 
@@ -82,8 +95,8 @@ function GamePage() {
   async function copyInviteLink() {
     const inviteUrl =
       typeof window !== "undefined"
-        ? `${window.location.origin}/game/${gameId}/expert`
-        : `/game/${gameId}/expert`;
+        ? `${window.location.origin}/game/${gameId}`
+        : `/game/${gameId}`;
     try {
       await navigator.clipboard.writeText(inviteUrl);
       setCopied(true);
@@ -94,8 +107,9 @@ function GamePage() {
   }
 
   useEffect(() => {
-    joinMut.mutate({ data: { gameId, role: playerRole } });
-  }, [gameId, playerRole]);
+    if (!sessionId) return;
+    joinMut.mutate({ data: { gameId, sessionId } });
+  }, [gameId, sessionId]);
 
   useEffect(() => {
     if (gameState?.game.status !== "active") return;
@@ -105,7 +119,11 @@ function GamePage() {
     return () => clearInterval(interval);
   }, [gameState?.game.status, gameId]);
 
-  if (isLoading) {
+  // Don't show "Signal Lost" until we've actually attempted at least one
+  // fetch — otherwise a reload would briefly flash the error screen while
+  // sessionId initialises and the query fires.
+  const initializing = !sessionId || (!isFetched && !error);
+  if (initializing) {
     return (
       <div className="min-h-screen flex items-center justify-center tx-grid">
         <div className="flex items-center gap-3 text-bone-dim font-mono text-xs uppercase tracking-[0.3em]">
@@ -155,8 +173,12 @@ function GamePage() {
       copied={copied}
       onCopy={copyInviteLink}
       onPick={pickRole}
-      onStart={() => startMut.mutate({ data: { gameId } })}
+      onStart={() => {
+        setStartError(null);
+        startMut.mutate({ data: { gameId } });
+      }}
       startPending={startMut.isPending}
+      startError={startError}
       switchPending={switchRoleMut.isPending}
       onHome={() => navigate({ to: "/" })}
     />;
@@ -196,6 +218,7 @@ interface LobbyViewProps {
   onPick: (r: PlayerRole) => void;
   onStart: () => void;
   startPending: boolean;
+  startError: string | null;
   switchPending: boolean;
   onHome: () => void;
 }
@@ -211,6 +234,7 @@ function LobbyView({
   onPick,
   onStart,
   startPending,
+  startError,
   switchPending,
   onHome,
 }: LobbyViewProps) {
@@ -312,11 +336,11 @@ function LobbyView({
                     }`}
                   >
                     <Icon
-                      size={22}
+                      size={44}
                       className={isMine ? r.accent : "text-bone-dim"}
-                      strokeWidth={2}
+                      strokeWidth={1.75}
                     />
-                    <div className={`font-stencil text-lg mt-1.5 tracking-wider uppercase ${isMine ? "text-bone" : "text-bone-dim"}`}>
+                    <div className={`font-stencil text-lg mt-2 tracking-wider uppercase ${isMine ? "text-bone" : "text-bone-dim"}`}>
                       {r.label}
                     </div>
                     <div className="text-[10px] font-mono uppercase tracking-widest text-bone-dim/60 mb-1.5">
@@ -380,6 +404,12 @@ function LobbyView({
                 <ArrowRight size={20} strokeWidth={2.5} />
               )}
             </button>
+            {startError && (
+              <p className="mt-3 text-crimson font-mono text-xs uppercase tracking-[0.18em] flex items-center gap-2">
+                <AlertTriangle size={12} />
+                {startError}
+              </p>
+            )}
           </div>
         </div>
 

@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { ShieldCheck, AlertCircle, BatteryFull } from "lucide-react";
+import { BatteryFull } from "lucide-react";
 import type { Module, ButtonModuleConfig } from "../../lib/types";
 
 const BUTTON_COLORS: Record<string, string> = {
@@ -101,7 +101,7 @@ export function ButtonModule({
       <span className="screw bottom-1.5 left-1.5" />
       <span className="screw bottom-1.5 right-1.5" />
 
-      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-chassis px-2.5 py-0.5 text-[9px] font-stencil tracking-[0.3em] text-bone-dim border border-steel/40">
+      <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-chassis px-3 py-1 text-sm font-stencil tracking-[0.18em] text-bone border border-steel/60">
         BUTTON · MOD-B
       </div>
 
@@ -117,8 +117,6 @@ export function ButtonModule({
               : "ARMED"}
           </span>
         </div>
-        {module.solved && <ShieldCheck size={14} className="text-phosphor" />}
-        {module.struck && <AlertCircle size={14} className="text-crimson" />}
       </div>
 
       {/* Top indicator label LED */}
@@ -162,11 +160,12 @@ export function ButtonModule({
               : "cursor-pointer"
           } ${holding ? "btn-press" : ""}`}
           style={{
-            backgroundColor: bgColor,
+            // Radial highlight on top-left for a glossy domed cap
+            background: `radial-gradient(ellipse at 32% 28%, color-mix(in srgb, ${bgColor} 60%, #fff) 0%, ${bgColor} 35%, color-mix(in srgb, ${bgColor} 70%, #000) 100%)`,
             color: textColor,
             boxShadow: holding
-              ? `inset 0 4px 10px rgba(0,0,0,0.6), 0 0 28px ${bgColor}aa, 0 0 0 6px rgba(0,0,0,0.25)`
-              : `0 5px 0 rgba(0,0,0,0.55), 0 0 22px ${bgColor}66, 0 0 0 6px rgba(0,0,0,0.25)`,
+              ? `inset 0 5px 14px rgba(0,0,0,0.7), inset 0 -2px 4px rgba(255,255,255,0.18), 0 0 34px ${bgColor}aa, 0 0 0 4px rgba(0,0,0,0.55), 0 0 0 8px rgba(80,100,140,0.18)`
+              : `inset 0 2px 1px rgba(255,255,255,0.4), inset 0 -6px 12px rgba(0,0,0,0.4), 0 8px 0 rgba(0,0,0,0.6), 0 12px 18px rgba(0,0,0,0.55), 0 0 28px ${bgColor}55, 0 0 0 4px rgba(0,0,0,0.55), 0 0 0 8px rgba(80,100,140,0.18)`,
           }}
         >
           <span className="relative z-10">{config.label}</span>

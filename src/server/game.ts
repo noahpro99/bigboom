@@ -4,10 +4,12 @@ import { getDb } from "../lib/db";
 import {
   generateWireModule,
   generateButtonModule,
+  generateSymbolsModule,
   generateSerialNumber,
   getWireSolution,
   getButtonAction,
   checkReleaseTiming,
+  getSymbolsSolution,
 } from "../lib/generator";
 import type {
   GameState,
@@ -15,6 +17,7 @@ import type {
   PlayerRole,
   ButtonModuleConfig,
   WireModuleConfig,
+  SymbolsModuleConfig,
 } from "../lib/types";
 
 function shortId(): string {
@@ -24,8 +27,11 @@ function shortId(): string {
   ).join("");
 }
 
-export const createGame = createServerFn({ method: "POST" }).handler(
-  async () => {
+const ACTIVE_SECONDS = 10;
+
+export const createGame = createServerFn({ method: "POST" })
+  .validator((data: { sessionId: string }) => data)
+  .handler(async ({ data }) => {
     const db = getDb();
     const gameId = shortId();
     const seed = Math.floor(Math.random() * 2_000_000_000);
@@ -47,38 +53,60 @@ export const createGame = createServerFn({ method: "POST" }).handler(
       "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'button', 1, ?)",
       [nanoid(), gameId, JSON.stringify(buttonConfig)]
     );
+    const symbolCount = seed % 3 === 0 ? 2 : 1;
+    for (let i = 0; i < symbolCount; i++) {
+      db.run(
+        "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'symbols', ?, ?)",
+        [nanoid(), gameId, 2 + i, JSON.stringify(generateSymbolsModule(seed + i * 77777))]
+      );
+    }
+
+    // Creator starts as Defuser.
+    db.run(
+      `INSERT INTO game_players (game_id, session_id, role, last_seen)
+       VALUES (?, ?, 'defuser', unixepoch())`,
+      [gameId, data.sessionId]
+    );
 
     return { gameId, seed };
-  }
-);
+  });
 
-// Atomically remove the old role and claim the new one. Used when a player
-// changes role from the lobby.
+// Set this session's role for the game and refresh last_seen. UPSERT keyed on
+// (game_id, session_id) — each browser tab owns exactly one row.
+function upsertPlayer(
+  db: ReturnType<typeof getDb>,
+  gameId: string,
+  sessionId: string,
+  role: PlayerRole
+) {
+  db.run(
+    `INSERT INTO game_players (game_id, session_id, role, last_seen)
+     VALUES (?, ?, ?, unixepoch())
+     ON CONFLICT(game_id, session_id) DO UPDATE SET role = excluded.role, last_seen = excluded.last_seen`,
+    [gameId, sessionId, role]
+  );
+}
+
 export const switchRole = createServerFn({ method: "POST" })
   .validator(
     (data: {
       gameId: string;
-      fromRole: PlayerRole;
+      sessionId: string;
       toRole: PlayerRole;
     }) => data
   )
   .handler(async ({ data }) => {
     const db = getDb();
-    if (data.fromRole !== data.toRole) {
-      db.run(
-        "DELETE FROM game_players WHERE game_id = ? AND role = ?",
-        [data.gameId, data.fromRole]
-      );
-    }
-    db.run(
-      "INSERT OR IGNORE INTO game_players (game_id, role) VALUES (?, ?)",
-      [data.gameId, data.toRole]
-    );
+    upsertPlayer(db, data.gameId, data.sessionId, data.toRole);
     return { ok: true };
   });
 
+// Visitor joins a game. If this session already has a role, keep it; otherwise
+// assign whichever role is currently open (default: expert).
 export const joinGame = createServerFn({ method: "POST" })
-  .validator((data: { gameId: string; role: PlayerRole }) => data)
+  .validator(
+    (data: { gameId: string; sessionId: string }) => data
+  )
   .handler(async ({ data }) => {
     const db = getDb();
     const game = db
@@ -86,30 +114,54 @@ export const joinGame = createServerFn({ method: "POST" })
       .get(data.gameId) as { status: string } | null;
 
     if (!game) return { ok: false as const, error: "Game not found" };
-    if (game.status === "won" || game.status === "lost")
-      return { ok: false as const, error: "Game is over" };
 
-    db.run(
-      "INSERT OR IGNORE INTO game_players (game_id, role) VALUES (?, ?)",
-      [data.gameId, data.role]
-    );
-    return { ok: true as const };
+    const existing = db
+      .query(
+        "SELECT role FROM game_players WHERE game_id = ? AND session_id = ?"
+      )
+      .get(data.gameId, data.sessionId) as { role: PlayerRole } | null;
+
+    if (existing) {
+      // Heartbeat — keep the role they already have
+      db.run(
+        "UPDATE game_players SET last_seen = unixepoch() WHERE game_id = ? AND session_id = ?",
+        [data.gameId, data.sessionId]
+      );
+      return { ok: true as const, role: existing.role };
+    }
+
+    // First time this session has joined — pick whichever slot is open
+    const activeRoles = db
+      .query(
+        "SELECT DISTINCT role FROM game_players WHERE game_id = ? AND last_seen > unixepoch() - ?"
+      )
+      .all(data.gameId, ACTIVE_SECONDS) as { role: PlayerRole }[];
+    const hasDefuser = activeRoles.some((r) => r.role === "defuser");
+    const hasExpert = activeRoles.some((r) => r.role === "expert");
+    const assigned: PlayerRole = !hasDefuser
+      ? "defuser"
+      : !hasExpert
+      ? "expert"
+      : "expert";
+
+    upsertPlayer(db, data.gameId, data.sessionId, assigned);
+    return { ok: true as const, role: assigned };
   });
 
 export const getGameState = createServerFn({ method: "GET" })
   .validator(
-    (data: { gameId: string; role?: PlayerRole }) => data
+    (data: { gameId: string; sessionId?: string }) => data
   )
   .handler(async ({ data }): Promise<GameState | null> => {
     const db = getDb();
 
-    // Heartbeat: re-claim the caller's current role on every poll so that a
-    // role row deleted by the other player's switchRole gets restored as long
-    // as someone is actively browsing that role's URL.
-    if (data.role) {
+    // Heartbeat — only refresh THIS session's last_seen. We never touch the
+    // role here, so an in-flight poll from a tab that has since switched
+    // roles cannot revert the role row.
+    if (data.sessionId) {
       db.run(
-        "INSERT OR IGNORE INTO game_players (game_id, role) VALUES (?, ?)",
-        [data.gameId, data.role]
+        "UPDATE game_players SET last_seen = unixepoch() WHERE game_id = ? AND session_id = ?",
+        [data.gameId, data.sessionId]
       );
     }
 
@@ -130,8 +182,16 @@ export const getGameState = createServerFn({ method: "GET" })
     if (!gameRow) return null;
 
     const players = db
-      .query("SELECT role, joined_at FROM game_players WHERE game_id = ?")
-      .all(data.gameId) as { role: PlayerRole; joined_at: number }[];
+      .query(
+        `SELECT DISTINCT role, MAX(last_seen) AS last_seen
+         FROM game_players
+         WHERE game_id = ? AND last_seen > unixepoch() - ?
+         GROUP BY role`
+      )
+      .all(data.gameId, ACTIVE_SECONDS) as {
+      role: PlayerRole;
+      last_seen: number;
+    }[];
 
     const moduleRows = db
       .query(
@@ -151,7 +211,7 @@ export const getGameState = createServerFn({ method: "GET" })
     const modules: Module[] = moduleRows.map((m) => ({
       id: m.id,
       gameId: m.game_id,
-      type: m.type as "wire" | "button",
+      type: m.type as "wire" | "button" | "symbols",
       position: m.position,
       config: JSON.parse(m.config_json),
       state: JSON.parse(m.state_json),
@@ -163,6 +223,17 @@ export const getGameState = createServerFn({ method: "GET" })
     if (gameRow.started_at && gameRow.status === "active") {
       const elapsed = Math.floor(Date.now() / 1000) - gameRow.started_at;
       timeRemaining = Math.max(0, gameRow.timer_seconds - elapsed);
+    }
+
+    // Resolve this session's current role (if any)
+    let myRole: PlayerRole | null = null;
+    if (data.sessionId) {
+      const mine = db
+        .query(
+          "SELECT role FROM game_players WHERE game_id = ? AND session_id = ?"
+        )
+        .get(data.gameId, data.sessionId) as { role: PlayerRole } | null;
+      myRole = mine?.role ?? null;
     }
 
     return {
@@ -177,9 +248,10 @@ export const getGameState = createServerFn({ method: "GET" })
         maxStrikes: gameRow.max_strikes,
         createdAt: gameRow.created_at,
       },
-      players: players.map((p) => ({ role: p.role, joinedAt: p.joined_at })),
+      players: players.map((p) => ({ role: p.role, joinedAt: p.last_seen })),
       modules,
       timeRemaining,
+      myRole,
     };
   });
 
@@ -215,6 +287,13 @@ export const restartGame = createServerFn({ method: "POST" })
       "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'button', 1, ?)",
       [nanoid(), data.gameId, JSON.stringify(buttonConfig)]
     );
+    const symbolCount = newSeed % 3 === 0 ? 2 : 1;
+    for (let i = 0; i < symbolCount; i++) {
+      db.run(
+        "INSERT INTO modules (id, game_id, type, position, config_json) VALUES (?, ?, 'symbols', ?, ?)",
+        [nanoid(), data.gameId, 2 + i, JSON.stringify(generateSymbolsModule(newSeed + i * 77777))]
+      );
+    }
 
     return { ok: true as const };
   });
@@ -223,12 +302,29 @@ export const startGame = createServerFn({ method: "POST" })
   .validator((data: { gameId: string }) => data)
   .handler(async ({ data }) => {
     const db = getDb();
+
+    // Authoritative role check — refuse to start unless both roles are claimed.
+    // The client UI also gates this, but the server is the source of truth.
+    const roles = db
+      .query(
+        "SELECT DISTINCT role FROM game_players WHERE game_id = ? AND last_seen > unixepoch() - ?"
+      )
+      .all(data.gameId, ACTIVE_SECONDS) as { role: string }[];
+    const hasDefuser = roles.some((r) => r.role === "defuser");
+    const hasExpert = roles.some((r) => r.role === "expert");
+    if (!hasDefuser || !hasExpert) {
+      return {
+        ok: false as const,
+        error: "Need at least one Defuser and one Expert",
+      };
+    }
+
     const now = Math.floor(Date.now() / 1000);
     db.run(
       "UPDATE games SET status = 'active', started_at = ? WHERE id = ? AND status = 'waiting'",
       [now, data.gameId]
     );
-    return { ok: true };
+    return { ok: true as const };
   });
 
 function applyStrike(gameId: string): { strikes: number; lost: boolean } {
@@ -278,7 +374,7 @@ function loadModule(moduleId: string): Module | null {
   return {
     id: row.id,
     gameId: row.game_id,
-    type: row.type as "wire" | "button",
+    type: row.type as "wire" | "button" | "symbols",
     position: row.position,
     config: JSON.parse(row.config_json),
     state: JSON.parse(row.state_json),
@@ -438,4 +534,43 @@ export const checkTimer = createServerFn({ method: "POST" })
       return { lost: true };
     }
     return { lost: false };
+  });
+
+// Defuser presses a symbol button. Validates against the required sequence
+// (= solution derived from the column that contains the active symbols).
+// Wrong press → strike + progress resets. Correct last press → solved.
+export const pressSymbol = createServerFn({ method: "POST" })
+  .validator(
+    (data: { gameId: string; moduleId: string; symbolId: string }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+
+    const config = mod.config as SymbolsModuleConfig;
+    const solution = getSymbolsSolution(config);
+    const pressedIds: string[] = mod.state.pressedIds ?? [];
+    const expectedNext = solution[pressedIds.length];
+
+    if (data.symbolId === expectedNext) {
+      const newPressed = [...pressedIds, data.symbolId];
+      const solved = newPressed.length === solution.length;
+      db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
+        JSON.stringify({ ...mod.state, pressedIds: newPressed }),
+        data.moduleId,
+      ]);
+      if (solved) {
+        db.run("UPDATE modules SET solved = 1 WHERE id = ?", [data.moduleId]);
+        checkAllSolved(data.gameId);
+      }
+      return { ok: true, correct: true, solved };
+    } else {
+      db.run("UPDATE modules SET state_json = ?, struck = 1 WHERE id = ?", [
+        JSON.stringify({ ...mod.state, pressedIds: [] }),
+        data.moduleId,
+      ]);
+      const { lost } = applyStrike(data.gameId);
+      return { ok: true, correct: false, lost };
+    }
   });

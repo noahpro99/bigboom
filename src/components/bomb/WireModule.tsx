@@ -1,4 +1,4 @@
-import { Scissors, ShieldCheck, AlertCircle } from "lucide-react";
+import { Scissors } from "lucide-react";
 import type { Module, WireModuleConfig } from "../../lib/types";
 
 const WIRE_COLORS: Record<string, string> = {
@@ -40,7 +40,7 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
       <span className="screw bottom-1.5 right-1.5" />
 
       {/* Module label strip */}
-      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-chassis px-2.5 py-0.5 text-[9px] font-stencil tracking-[0.3em] text-bone-dim border border-steel/40">
+      <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-chassis px-3 py-1 text-sm font-stencil tracking-[0.18em] text-bone border border-steel/60">
         WIRE · MOD-A
       </div>
 
@@ -55,8 +55,6 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
               : "ARMED"}
           </span>
         </div>
-        {module.solved && <ShieldCheck size={14} className="text-phosphor" />}
-        {module.struck && <AlertCircle size={14} className="text-crimson" />}
       </div>
 
       {/* Top connector strip */}
@@ -64,11 +62,7 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
         {config.slots.map((_, i) => (
           <div
             key={`top-${i}`}
-            className="w-3 h-3 rounded-full border border-steel-light/40"
-            style={{
-              background:
-                "radial-gradient(circle at 35% 35%, #5a6478, #1f2535)",
-            }}
+            className="w-3 h-3 rounded-full pin-3d"
           />
         ))}
       </div>
@@ -86,7 +80,7 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
               key={i}
               disabled={!clickable}
               onClick={() => clickable && onCut(i)}
-              className={`relative flex flex-col items-center justify-center group px-3 sm:px-2 ${
+              className={`relative flex flex-col items-center justify-center group w-3 ${
                 isCut ? "wire-cut" : ""
               } ${clickable ? "cursor-pointer" : "cursor-default"}`}
               aria-label={isEmpty ? "Empty slot" : `${slot!.color} wire`}
@@ -98,23 +92,26 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
                 />
               ) : (
                 <div
-                  className="w-2.5 rounded-full transition-all duration-150"
+                  className="w-3 rounded-full transition-all duration-150 relative"
                   style={{
                     height: "64px",
-                    backgroundColor: color!,
-                    boxShadow: `0 0 6px ${color}80, inset 0 0 0 1px rgba(255,255,255,0.18)`,
+                    background: `linear-gradient(90deg, color-mix(in srgb, ${color} 55%, #000) 0%, ${color} 35%, color-mix(in srgb, ${color} 70%, #fff) 55%, ${color} 85%, color-mix(in srgb, ${color} 60%, #000) 100%)`,
+                    boxShadow: `0 0 6px ${color}80, inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(0,0,0,0.4)`,
                     opacity: isCut ? 0.3 : 1,
                   }}
                 />
               )}
               {clickable && (
-                <div className="absolute inset-0 flex items-center justify-center opacity-25 sm:opacity-0 group-hover:opacity-100 group-active:opacity-90 transition-opacity pointer-events-none">
-                  <Scissors
-                    size={18}
-                    className="text-bone drop-shadow-[0_0_4px_#000]"
-                    strokeWidth={2.5}
-                  />
-                </div>
+                <Scissors
+                  size={36}
+                  strokeWidth={2}
+                  className="text-bone absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                  style={{
+                    maxWidth: "none",
+                    filter:
+                      "drop-shadow(0 0 0 #050a14) drop-shadow(0 1px 0 #050a14) drop-shadow(0 -1px 0 #050a14) drop-shadow(1px 0 0 #050a14) drop-shadow(-1px 0 0 #050a14) drop-shadow(0 3px 6px rgba(0,0,0,0.95))",
+                  }}
+                />
               )}
             </button>
           );
@@ -126,11 +123,7 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
         {config.slots.map((_, i) => (
           <div
             key={`bot-${i}`}
-            className="w-3 h-3 rounded-full border border-steel-light/40"
-            style={{
-              background:
-                "radial-gradient(circle at 35% 35%, #5a6478, #1f2535)",
-            }}
+            className="w-3 h-3 rounded-full pin-3d"
           />
         ))}
       </div>

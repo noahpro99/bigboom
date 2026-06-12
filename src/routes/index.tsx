@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { createGame } from "../server/game";
+import { getSessionId } from "../lib/session";
 import { Bomb, ArrowRight, Link2, AlertTriangle } from "lucide-react";
 import { DiscordIcon } from "../components/icons/Discord";
 
@@ -33,10 +34,12 @@ function HomePage() {
   async function handleCreate() {
     setLoading(true);
     try {
-      const result = await createGame();
+      const result = await createGame({
+        data: { sessionId: getSessionId() },
+      });
       await navigate({
-        to: "/game/$gameId/$role",
-        params: { gameId: result.gameId, role: "defuser" },
+        to: "/game/$gameId",
+        params: { gameId: result.gameId },
       });
     } finally {
       setLoading(false);
@@ -51,8 +54,8 @@ function HomePage() {
     }
     setPasteError("");
     await navigate({
-      to: "/game/$gameId/$role",
-      params: { gameId, role: "expert" },
+      to: "/game/$gameId",
+      params: { gameId },
     });
   }
 

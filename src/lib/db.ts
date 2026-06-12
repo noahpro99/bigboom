@@ -25,10 +25,13 @@ export function getDb(): Database {
 
     CREATE TABLE IF NOT EXISTS game_players (
       game_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
       role TEXT NOT NULL,
-      joined_at INTEGER DEFAULT (unixepoch()),
-      PRIMARY KEY (game_id, role)
+      last_seen INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY (game_id, session_id)
     );
+    CREATE INDEX IF NOT EXISTS idx_game_players_game_role_seen
+      ON game_players (game_id, role, last_seen);
 
     CREATE TABLE IF NOT EXISTS modules (
       id TEXT PRIMARY KEY,
