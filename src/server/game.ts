@@ -11,6 +11,7 @@ import {
   generateMemoryModule,
   generateMorseModule,
   generatePasswordModule,
+  generateComplicatedWiresModule,
   generateSerialNumber,
   getWireSolution,
   getButtonAction,
@@ -21,6 +22,7 @@ import {
   getMorseSolutionFreqIndex,
   passwordIsCorrect,
   checkReleaseTiming,
+  compWireShouldCut,
 } from "../lib/generator";
 import type {
   GameState,
@@ -38,6 +40,7 @@ import type {
   MemoryPress,
   MorseModuleConfig,
   PasswordModuleConfig,
+  ComplicatedWiresModuleConfig,
   Preset,
   GameConfig,
 } from "../lib/types";
@@ -46,6 +49,7 @@ import {
   PASSWORD_COLS,
   PASSWORD_LETTERS_PER_COL,
   PRESET_CONFIGS,
+  compWireKey,
   canonicalModuleSet,
   detectPreset,
 } from "../lib/types";
@@ -73,6 +77,7 @@ const TYPE_SEED_SALT: Record<ModuleType, number> = {
   memory: 0x60_0001,
   morse: 0x70_0001,
   password: 0x80_0001,
+  compWires: 0x90_0001,
 };
 
 function instanceSeed(
@@ -99,7 +104,7 @@ function spawnModules(
   let pos = 0;
   const seenCount: Record<ModuleType, number> = {
     wire: 0, button: 0, symbols: 0, simon: 0,
-    maze: 0, memory: 0, morse: 0, password: 0,
+    maze: 0, memory: 0, morse: 0, password: 0, compWires: 0,
   };
   /* Symbols share columns across all instances on the bomb (one manual
      page covers all). Only build the columns if there's at least one
@@ -139,6 +144,10 @@ function spawnModules(
       configJson = JSON.stringify(generateMorseModule(seed, iseed));
     } else if (type === "password") {
       configJson = JSON.stringify(generatePasswordModule(seed));
+    } else if (type === "compWires") {
+      configJson = JSON.stringify(
+        generateComplicatedWiresModule(seed, iseed)
+      );
     } else {
       continue;
     }
@@ -161,7 +170,7 @@ function normalizeConfig(input: Partial<GameConfig>): GameConfig {
   );
   const counts: Record<ModuleType, number> = {
     wire: 0, button: 0, symbols: 0, simon: 0,
-    maze: 0, memory: 0, morse: 0, password: 0,
+    maze: 0, memory: 0, morse: 0, password: 0, compWires: 0,
   };
   for (const t of input.moduleTypes ?? []) {
     if (t in counts) counts[t]++;
@@ -178,6 +187,7 @@ function normalizeConfig(input: Partial<GameConfig>): GameConfig {
     "memory",
     "morse",
     "password",
+    "compWires",
   ];
   const moduleTypes: ModuleType[] = [];
   for (const t of order) {
@@ -429,7 +439,7 @@ export const getGameState = createServerFn({ method: "GET" })
     const modules: Module[] = moduleRows.map((m) => ({
       id: m.id,
       gameId: m.game_id,
-      type: m.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password",
+      type: m.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password" | "compWires",
       position: m.position,
       config: JSON.parse(m.config_json),
       state: JSON.parse(m.state_json),
@@ -848,7 +858,7 @@ function loadModule(moduleId: string): Module | null {
   return {
     id: row.id,
     gameId: row.game_id,
-    type: row.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password",
+    type: row.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password" | "compWires",
     position: row.position,
     config: JSON.parse(row.config_json),
     state: JSON.parse(row.state_json),
@@ -1091,6 +1101,87 @@ export const submitPassword = createServerFn({ method: "POST" })
       return { ok: true, correct: true, solved: true };
     }
     db.run("UPDATE modules SET struck = 1 WHERE id = ?", [data.moduleId]);
+    const { lost } = applyStrike(data.gameId);
+    return { ok: true, correct: false, lost };
+  });
+
+// Complicated Wires — defuser cuts a wire at a specific slot. The
+// rule for that wire comes from looking up its Venn flags in the
+// per-bomb decision table, then applying the resolved outcome against
+// the bomb's serial + battery count. Correct cut → record + check
+// solved (all should-cut wires are now cut). Wrong cut → strike, but
+// the cut still records so the wire visibly stays severed.
+export const cutCompWire = createServerFn({ method: "POST" })
+  .validator(
+    (data: { gameId: string; moduleId: string; slotIndex: number }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+
+    const gameRow = db
+      .query("SELECT serial_number FROM games WHERE id = ?")
+      .get(data.gameId) as { serial_number: string } | null;
+    if (!gameRow) return { ok: false };
+
+    const config = mod.config as ComplicatedWiresModuleConfig;
+    const wire = config.wires[data.slotIndex];
+    if (!wire) return { ok: false };
+    const cut = mod.state.cutCompWires ?? [];
+    if (cut.includes(data.slotIndex)) return { ok: false };
+
+    /* Battery count comes from the bomb's Button module config (the
+       only place it lives). If there isn't one, treat as zero. */
+    const buttonRow = db
+      .query(
+        "SELECT config_json FROM modules WHERE game_id = ? AND type = 'button' LIMIT 1"
+      )
+      .get(data.gameId) as { config_json: string } | null;
+    let batteryCount = 0;
+    if (buttonRow) {
+      const btnCfg = JSON.parse(buttonRow.config_json) as {
+        batteryCount: number;
+      };
+      batteryCount = btnCfg.batteryCount ?? 0;
+    }
+
+    const outcome = config.table[compWireKey(wire)];
+    const shouldCut = compWireShouldCut(
+      outcome,
+      gameRow.serial_number,
+      batteryCount
+    );
+    const nextCut = [...cut, data.slotIndex];
+
+    if (shouldCut) {
+      /* Correct. Persist the cut. If every should-cut wire is now
+         present, mark the module solved. */
+      db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
+        JSON.stringify({ ...mod.state, cutCompWires: nextCut }),
+        data.moduleId,
+      ]);
+      const shouldCutSet = new Set<number>();
+      for (let i = 0; i < config.wires.length; i++) {
+        const o = config.table[compWireKey(config.wires[i])];
+        if (compWireShouldCut(o, gameRow.serial_number, batteryCount)) {
+          shouldCutSet.add(i);
+        }
+      }
+      const allDone = [...shouldCutSet].every((i) => nextCut.includes(i));
+      if (allDone) {
+        db.run("UPDATE modules SET solved = 1 WHERE id = ?", [data.moduleId]);
+        checkAllSolved(data.gameId);
+        return { ok: true, correct: true, solved: true };
+      }
+      return { ok: true, correct: true };
+    }
+
+    /* Wrong cut — record it (the wire visibly fades) and strike. */
+    db.run("UPDATE modules SET state_json = ?, struck = 1 WHERE id = ?", [
+      JSON.stringify({ ...mod.state, cutCompWires: nextCut }),
+      data.moduleId,
+    ]);
     const { lost } = applyStrike(data.gameId);
     return { ok: true, correct: false, lost };
   });

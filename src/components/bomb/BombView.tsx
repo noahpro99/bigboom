@@ -7,6 +7,7 @@ import { MazeModule } from "./MazeModule";
 import { MemoryModule } from "./MemoryModule";
 import { MorseModule } from "./MorseModule";
 import { PasswordModule } from "./PasswordModule";
+import { ComplicatedWiresModule } from "./ComplicatedWiresModule";
 import { Timer } from "./Timer";
 import { ProfileButton } from "../ProfileButton";
 import { BatteryPanel } from "./BatteryPanel";
@@ -23,6 +24,7 @@ import {
   transmitMorse,
   cyclePassword,
   submitPassword,
+  cutCompWire,
 } from "../../server/game";
 import { useDisplayTime } from "../../lib/useDisplayTime";
 import { play } from "../../lib/sound";
@@ -273,6 +275,22 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     mutationFn: submitPassword,
     onSuccess: onActionResult,
   });
+  /* COMPLICATED WIRES — like the basic Wire module, record the cut
+     immediately so the wire fades. Whether it was correct comes back
+     from the server. */
+  const compCutMut = useMutation({
+    mutationFn: cutCompWire,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({
+        ...s,
+        cutCompWires: [...(s.cutCompWires ?? []), vars.data.slotIndex],
+      }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
+    onSuccess: onActionResult,
+  });
 
   /* Spectators see everything but can't interact — fold into the same
      `disabled` gate every module already checks. */
@@ -501,6 +519,20 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     onSubmit={() =>
                       pwSubmitMut.mutate({
                         data: { gameId: game.id, moduleId: mod.id },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'compWires') {
+                return (
+                  <ComplicatedWiresModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onCut={(slotIndex) =>
+                      compCutMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id, slotIndex },
                       })
                     }
                   />

@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   generateManualPages,
   memoryRuleText,
+  COMP_OUTCOME_TEXT,
+  COMP_OUTCOME_SHORT,
 } from "../../lib/generator";
 import type {
   ManualPage,
@@ -10,6 +12,7 @@ import type {
   MemoryStageConfig,
   MorseEntry,
   ModuleType,
+  CompWireOutcome,
 } from "../../lib/types";
 import { MORSE_FREQS } from "../../lib/types";
 import {
@@ -809,6 +812,76 @@ function MorseTableBlock({ pool }: { pool: MorseEntry[] }) {
    candidate aloud and confirming letter-by-letter is the point: it
    forces back-and-forth instead of letting the expert solve in their
    head. */
+/* Complicated Wires decision table. The 16 rows are (R/B/S/L)
+   combinations — Red, Blue, Star, LED. Each cell shows the per-bomb
+   outcome shorthand (Cut / No / Odd / Batt / Vowel), with a small
+   legend below explaining what those mean. */
+function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
+  const FLAGS = ["Red", "Blue", "Star", "LED"];
+  /* Build all 16 rows in canonical order (matching compWireKey:
+     bit 3=red, bit 2=blue, bit 1=star, bit 0=led). */
+  const rows = Array.from({ length: 16 }, (_, key) => ({
+    key,
+    flags: [
+      (key & 8) !== 0,
+      (key & 4) !== 0,
+      (key & 2) !== 0,
+      (key & 1) !== 0,
+    ],
+    outcome: table[key],
+  }));
+  return (
+    <div className="mb-5">
+      <table className="w-full border-collapse font-serif text-[12px] sm:text-[13px] ink-text">
+        <thead>
+          <tr>
+            {FLAGS.map((f) => (
+              <th
+                key={f}
+                className="text-center font-bold text-[10px] uppercase tracking-[0.18em] pb-1 px-1.5 border-b-[1.2px] border-ink/85 ink-text-bold whitespace-nowrap"
+              >
+                {f}
+              </th>
+            ))}
+            <th className="text-left font-bold text-[10px] uppercase tracking-[0.18em] pb-1 pl-3 border-b-[1.2px] border-ink/85 ink-text-bold whitespace-nowrap">
+              Action
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key} className="border-b border-ink/20 last:border-b-0">
+              {row.flags.map((on, i) => (
+                <td
+                  key={i}
+                  className={`text-center py-1 px-1.5 ${
+                    on ? "font-bold ink-text-bold" : "text-ink/35"
+                  }`}
+                >
+                  {on ? "●" : "·"}
+                </td>
+              ))}
+              <td className="py-1 pl-3 font-mono font-bold tracking-[0.1em]">
+                {COMP_OUTCOME_SHORT[row.outcome]}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-[12px] font-serif">
+        {(Object.keys(COMP_OUTCOME_SHORT) as CompWireOutcome[]).map((k) => (
+          <div key={k} className="flex items-baseline gap-2">
+            <span className="font-mono font-bold ink-text-bold w-12 shrink-0">
+              {COMP_OUTCOME_SHORT[k]}
+            </span>
+            <span className="text-ink/85">{COMP_OUTCOME_TEXT[k]}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PasswordDictBlock({ words }: { words: string[] }) {
   return (
     <div className="mb-5">
@@ -1142,13 +1215,11 @@ function ManualPageView({
             }
 
             if (block.type === 'passwordDict') {
-              return (
-                <PasswordDictBlock
-                  key={bi}
-                  words={block.words}
-                  columns={block.columns}
-                />
-              );
+              return <PasswordDictBlock key={bi} words={block.words} />;
+            }
+
+            if (block.type === 'compWireTable') {
+              return <CompWireTableBlock key={bi} table={block.table} />;
             }
 
             if (block.type === 'symbolColumns') {

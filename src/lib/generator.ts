@@ -26,7 +26,11 @@ import type {
   MorseEntry,
   PasswordModuleConfig,
   ModuleType,
+  ComplicatedWiresModuleConfig,
+  CompWire,
+  CompWireOutcome,
 } from "./types";
+import { compWireKey } from "./types";
 import {
   MAZE_SIZE,
   MAZE_POOL,
@@ -807,6 +811,28 @@ export function generateManualPages(
     ],
   };
 
+  const compWiresConfig = generateComplicatedWiresModule(seed);
+  const compWiresPage: ManualPage = {
+    moduleType: "compWires",
+    title: "COMPLICATED WIRES",
+    sections: [
+      {
+        heading: "Procedure",
+        content: [
+          {
+            type: "paragraph",
+            text:
+              "Each wire is described by four optional features — a red colour, a blue colour, a small star next to the slot, and an LED above it. Read those features off each wire, look up the matching cell in the table below, and apply its rule.",
+          },
+        ],
+      },
+      {
+        heading: "Decision table — find each wire's combination",
+        content: [{ type: "compWireTable", table: compWiresConfig.table }],
+      },
+    ],
+  };
+
   // Shuffle page order per bomb so the Expert can't memorize section
   // positions across rounds.
   const orderRng = mulberry32(seed + 31337);
@@ -819,6 +845,7 @@ export function generateManualPages(
     memory: memoryPage,
     morse: morsePage,
     password: passwordPage,
+    compWires: compWiresPage,
   };
   /* If a moduleTypes list is supplied, only emit pages for types
      actually present (dedup'd — duplicates collapse to one page). When
@@ -1568,6 +1595,78 @@ export function passwordIsCorrect(
 ): boolean {
   return config.acceptedWords.includes(attempt.toUpperCase());
 }
+
+// ---- Complicated Wires ----
+
+const COMP_OUTCOMES: CompWireOutcome[] = ["C", "D", "S", "B", "V"];
+
+export function generateComplicatedWiresModule(
+  baseSeed: number,
+  instanceSeed?: number
+): ComplicatedWiresModuleConfig {
+  /* The lookup table is the manual content — it's keyed on the base
+     seed so every instance on a multi-instance bomb (and the manual)
+     shares the same Venn table. The wire flags are per-instance so
+     duplicate modules feel like fresh puzzles even though the rules
+     are the same. */
+  const tableRng = mulberry32(baseSeed + 0x435f_5754);
+  const table: CompWireOutcome[] = Array.from({ length: 16 }, () =>
+    pick(tableRng, COMP_OUTCOMES)
+  );
+
+  const iseed = instanceSeed ?? baseSeed;
+  const wireRng = mulberry32(iseed + 0x435f_5749);
+  /* 4-6 wires per module. Each gets independently random flags;
+     about half are red and half blue, stars and LEDs are rarer to
+     keep the visual readable. */
+  const count = 4 + Math.floor(wireRng() * 3); // 4..6
+  const wires: CompWire[] = Array.from({ length: count }, () => ({
+    hasRed: wireRng() < 0.5,
+    hasBlue: wireRng() < 0.5,
+    hasStar: wireRng() < 0.35,
+    hasLED: wireRng() < 0.35,
+  }));
+
+  return { wires, table };
+}
+
+/* Resolve a single outcome code against the current bomb state.
+   Returns true if the wire should be cut. */
+export function compWireShouldCut(
+  outcome: CompWireOutcome,
+  serial: string,
+  batteryCount: number
+): boolean {
+  switch (outcome) {
+    case "C":
+      return true;
+    case "D":
+      return false;
+    case "S":
+      return getSerialLastDigit(serial) % 2 === 1;
+    case "B":
+      return batteryCount >= 2;
+    case "V":
+      return /[AEIOU]/i.test(serial);
+  }
+}
+
+/* Human-readable text for the five outcomes. Used by the manual. */
+export const COMP_OUTCOME_TEXT: Record<CompWireOutcome, string> = {
+  C: "Cut the wire",
+  D: "Do NOT cut",
+  S: "Cut if the serial's last digit is odd",
+  B: "Cut if the bomb has 2 or more batteries",
+  V: "Cut if the serial contains a vowel",
+};
+/* Shorter label for the per-cell table display. */
+export const COMP_OUTCOME_SHORT: Record<CompWireOutcome, string> = {
+  C: "Cut",
+  D: "No",
+  S: "Odd",
+  B: "Batt",
+  V: "Vowel",
+};
 
 export function getSymbolsSolution(config: SymbolsModuleConfig): string[] {
   const activeIds = new Set(config.activeSymbols.map((s) => s.id));

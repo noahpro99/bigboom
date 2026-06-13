@@ -307,6 +307,7 @@ const MODULE_META: Record<ModuleType, { label: string; sub: string }> = {
   memory: { label: "Memory", sub: "MOD-R" },
   morse: { label: "Morse", sub: "MOD-T" },
   password: { label: "Password", sub: "MOD-P" },
+  compWires: { label: "Comp-Wires", sub: "MOD-C" },
 };
 
 function ConfigSection({

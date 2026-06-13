@@ -17,7 +17,8 @@ export type ModuleType =
   | "maze"
   | "memory"
   | "morse"
-  | "password";
+  | "password"
+  | "compWires";
 
 export type Preset = "quick" | "standard" | "hardcore" | "custom";
 
@@ -40,6 +41,7 @@ export const ALL_OPTIONAL_MODULES: ModuleType[] = [
   "memory",
   "morse",
   "password",
+  "compWires",
 ];
 
 export const PRESET_CONFIGS: Record<
@@ -58,7 +60,7 @@ export const PRESET_CONFIGS: Record<
   },
   hardcore: {
     preset: "hardcore",
-    timerSeconds: 480,
+    timerSeconds: 540,
     moduleTypes: [
       "wire",
       "button",
@@ -68,6 +70,7 @@ export const PRESET_CONFIGS: Record<
       "memory",
       "morse",
       "password",
+      "compWires",
     ],
   },
 };
@@ -120,6 +123,7 @@ export function moduleTypesFromCounts(
     "memory",
     "morse",
     "password",
+    "compWires",
   ];
   const out: ModuleType[] = [];
   for (const t of order) {
@@ -142,6 +146,7 @@ export function moduleCounts(
     memory: 0,
     morse: 0,
     password: 0,
+    compWires: 0,
   };
   for (const t of types) out[t]++;
   return out;
@@ -161,6 +166,7 @@ const PER_MODULE_SECONDS: Record<ModuleType, number> = {
   memory: 65,
   morse: 55,
   password: 50,
+  compWires: 55,
 };
 const TIMER_BASELINE_SECONDS = 30;
 
@@ -278,6 +284,49 @@ export interface ModuleState {
   memoryHistory?: MemoryPress[]; // memory module: presses recorded per solved stage
   morseFreqIndex?: number;       // morse module: currently-dialled frequency index
   passwordDials?: number[];      // password module: per-column letter index (0..LETTERS-1)
+  cutCompWires?: number[];       // complicated-wires module: which slots have been cut
+}
+
+// Complicated Wires — KTaNE-style Venn-diagram cut/skip puzzle.
+// Each wire on the bomb has four optional flags: red colour, blue
+// colour, a star next to the slot, and an LED above it. There are
+// 2^4 = 16 combinations of those flags; each combination maps to one
+// of five outcomes:
+//   C — cut
+//   D — don't cut
+//   S — cut if the serial's last digit is odd
+//   B — cut if the bomb has 2+ batteries
+//   V — cut if the serial contains a vowel
+//
+// Procedural advance over KTaNE (which has ONE fixed Venn table for
+// every bomb): the 16-cell table is freshly randomised per module
+// from a seed, so the manual is unique each game.
+export type CompWireOutcome = "C" | "D" | "S" | "B" | "V";
+
+export interface CompWire {
+  hasRed: boolean;
+  hasBlue: boolean;
+  hasStar: boolean;
+  hasLED: boolean;
+}
+
+export interface ComplicatedWiresModuleConfig {
+  /* 4-6 wires; their slot order is the cut order. */
+  wires: CompWire[];
+  /* 16-entry lookup keyed on the wire's flag combo. The key is a
+     4-bit packed number — bit 0 = LED, bit 1 = star, bit 2 = blue,
+     bit 3 = red — so `table[wire.flagsKey]` gives the outcome. */
+  table: CompWireOutcome[];
+}
+
+/* Pack a wire's flags into the 0-15 table key. */
+export function compWireKey(w: CompWire): number {
+  return (
+    (w.hasRed ? 8 : 0) |
+    (w.hasBlue ? 4 : 0) |
+    (w.hasStar ? 2 : 0) |
+    (w.hasLED ? 1 : 0)
+  );
 }
 
 // Maze — a 6x6 grid of cells with walls between cells. Walls are stored
@@ -460,7 +509,8 @@ export interface Module {
     | MazeModuleConfig
     | MemoryModuleConfig
     | MorseModuleConfig
-    | PasswordModuleConfig;
+    | PasswordModuleConfig
+    | ComplicatedWiresModuleConfig;
   state: ModuleState;
   solved: boolean;
   struck: boolean;
@@ -522,4 +572,5 @@ export type ManualContent =
   | { type: "memoryStages"; stages: MemoryStageConfig[] }
   | { type: "morseAlphabet" }
   | { type: "morseTable"; pool: MorseEntry[] }
-  | { type: "passwordDict"; words: string[] };
+  | { type: "passwordDict"; words: string[] }
+  | { type: "compWireTable"; table: CompWireOutcome[] };
