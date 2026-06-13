@@ -937,62 +937,159 @@ function WhoTablesBlock({
   );
 }
 
-/* Complicated Wires decision table. The 16 rows are (R/B/S/L)
-   combinations — Red, Blue, Star, LED. Each cell shows the per-bomb
-   outcome shorthand (Cut / No / Odd / Batt / Vowel), with a small
-   legend below explaining what those mean. */
+/* Complicated Wires Venn diagram. Four overlapping ellipses — one per
+   wire flag (Red, Blue, Star, LED) — drawn in slightly varied
+   positions/rotations per bomb. Each of the 16 sub-regions carries
+   the per-bomb outcome shorthand (Cut / No / Odd / Batt / Vowel) at
+   the centroid of its sampled cells.
+
+   The visual is fully procedural: a hash of the table seeds the
+   ellipse geometry (overall rotation, eccentricity, per-ellipse
+   offset) and assigns each flag a distinct line style (solid,
+   dashed, dotted, dash-dot). No two bombs render the same diagram. */
 function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
-  const FLAGS = ["Red", "Blue", "Star", "LED"];
-  /* Build all 16 rows in canonical order (matching compWireKey:
-     bit 3=red, bit 2=blue, bit 1=star, bit 0=led). */
-  const rows = Array.from({ length: 16 }, (_, key) => ({
-    key,
-    flags: [
-      (key & 8) !== 0,
-      (key & 4) !== 0,
-      (key & 2) !== 0,
-      (key & 1) !== 0,
-    ],
-    outcome: table[key],
+  /* Visual seed — folds the outcome table into a 32-bit hash so
+     bombs with identical tables stay identical (and most pairs
+     differ). Cheap djb2 walk. */
+  const visualSeed = (() => {
+    let h = 5381 >>> 0;
+    for (let i = 0; i < table.length; i++) {
+      h = ((h << 5) + h + table[i].charCodeAt(0)) >>> 0;
+    }
+    return h || 1;
+  })();
+  const rng = miniRng(visualSeed);
+
+  /* W and H define the SVG viewBox (centred at origin). We give the
+     diagram more vertical room than horizontal because the labels for
+     the corner ellipses ride above/below their lobes. */
+  const W = 320;
+  const H = 260;
+
+  /* Four ellipses arranged around a small jittered ring. The base
+     angles are 45°, 135°, 225°, 315° so the lobes meet roughly at
+     the centre. Per-bomb rotation rotates the whole arrangement;
+     per-ellipse jitter nudges each one. */
+  const baseRotation = rng() * Math.PI * 2;
+  const ellipses = [0, 1, 2, 3].map((i) => {
+    const baseAngle = Math.PI / 4 + (i * Math.PI) / 2;
+    const angle = baseAngle + baseRotation + (rng() - 0.5) * 0.18;
+    const offset = 38 + rng() * 14; // 38..52
+    const a = 78 + rng() * 14; // 78..92 semi-major
+    const b = 46 + rng() * 8; // 46..54 semi-minor
+    const cx = Math.cos(angle) * offset;
+    const cy = Math.sin(angle) * offset;
+    return { cx, cy, a, b, rot: angle + Math.PI / 2 };
+  });
+
+  /* Line styles cycled across the four flags from a per-bomb start
+     index — keeps each flag's outline immediately recognizable
+     within one diagram but shuffled between bombs. Plus per-flag
+     colour from the ink palette so each shape carries the wire-flag
+     identity. */
+  const STYLES = ["solid", "dashed", "dotted", "dashdot"] as const;
+  const dashFor: Record<typeof STYLES[number], string> = {
+    solid: "0",
+    dashed: "9 5",
+    dotted: "1.5 4",
+    dashdot: "8 4 1.5 4",
+  };
+  const styleStart = Math.floor(rng() * 4);
+  const flagMeta = [
+    { name: "Red", color: "#a8201a" },
+    { name: "Blue", color: "#1d3f8e" },
+    { name: "Star", color: "#a17418" },
+    { name: "LED", color: "#176f3f" },
+  ].map((m, i) => ({
+    ...m,
+    style: STYLES[(styleStart + i) % STYLES.length],
   }));
+
+  /* Region centroids — sample a grid, classify each point by which
+     ellipses contain it, then take the centroid of points in each
+     combination. */
+  const centroids = computeRegionCentroids(ellipses, W, H);
+
+  /* Outer labels — anchored just past the outer edge of each ellipse,
+     in the direction away from origin. */
+  const outerLabels = ellipses.map((e, i) => {
+    const dir = Math.atan2(e.cy, e.cx) || rng();
+    const r = Math.hypot(e.cx, e.cy) + e.a * 0.95;
+    return {
+      x: Math.cos(dir) * r,
+      y: Math.sin(dir) * r,
+      ...flagMeta[i],
+    };
+  });
+
   return (
     <div className="mb-5">
-      <table className="w-full border-collapse font-serif text-[12px] sm:text-[13px] ink-text">
-        <thead>
-          <tr>
-            {FLAGS.map((f) => (
-              <th
-                key={f}
-                className="text-center font-bold text-[10px] uppercase tracking-[0.18em] pb-1 px-1.5 border-b-[1.2px] border-ink/85 ink-text-bold whitespace-nowrap"
-              >
-                {f}
-              </th>
-            ))}
-            <th className="text-left font-bold text-[10px] uppercase tracking-[0.18em] pb-1 pl-3 border-b-[1.2px] border-ink/85 ink-text-bold whitespace-nowrap">
-              Action
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.key} className="border-b border-ink/20 last:border-b-0">
-              {row.flags.map((on, i) => (
-                <td
-                  key={i}
-                  className={`text-center py-1 px-1.5 ${
-                    on ? "font-bold ink-text-bold" : "text-ink/35"
-                  }`}
-                >
-                  {on ? "●" : "·"}
-                </td>
-              ))}
-              <td className="py-1 pl-3 font-mono font-bold tracking-[0.1em]">
-                {COMP_OUTCOME_SHORT[row.outcome]}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <svg
+        viewBox={`${-W / 2} ${-H / 2} ${W} ${H}`}
+        className="w-full max-w-[520px] mx-auto h-auto block"
+        style={{ color: "var(--color-ink)" }}
+      >
+        {/* Outer flag labels */}
+        {outerLabels.map((l, i) => (
+          <text
+            key={i}
+            x={l.x}
+            y={l.y}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fill={l.color}
+            fontFamily="var(--font-stencil, sans-serif)"
+            fontSize="14"
+            fontWeight="700"
+            style={{ letterSpacing: "0.15em" }}
+          >
+            {l.name}
+          </text>
+        ))}
+
+        {/* The four ellipses themselves */}
+        {ellipses.map((e, i) => (
+          <ellipse
+            key={i}
+            cx={e.cx}
+            cy={e.cy}
+            rx={e.a}
+            ry={e.b}
+            transform={`rotate(${(e.rot * 180) / Math.PI} ${e.cx} ${e.cy})`}
+            fill="none"
+            stroke={flagMeta[i].color}
+            strokeWidth="1.4"
+            strokeDasharray={dashFor[flagMeta[i].style]}
+            opacity="0.85"
+          />
+        ))}
+
+        {/* Outcome label for each of the 16 regions. The empty
+            combination (key=0, outside all four ellipses) prints
+            near the bottom corner where it has natural space. */}
+        {centroids.map((c, key) => {
+          if (!c) return null;
+          const outcome = table[key];
+          return (
+            <text
+              key={key}
+              x={c.x}
+              y={c.y}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill="var(--color-ink)"
+              fontFamily="var(--font-mono, monospace)"
+              fontSize={key === 0 ? "9" : "10"}
+              fontWeight="700"
+              style={{ letterSpacing: "0.05em" }}
+            >
+              {COMP_OUTCOME_SHORT[outcome]}
+            </text>
+          );
+        })}
+      </svg>
+
+      {/* Legend — explains what each outcome shorthand resolves to. */}
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-[12px] font-serif">
         {(Object.keys(COMP_OUTCOME_SHORT) as CompWireOutcome[]).map((k) => (
           <div key={k} className="flex items-baseline gap-2">
@@ -1005,6 +1102,70 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
       </div>
     </div>
   );
+}
+
+/* Tiny inline mulberry32 — we don't want to drag a generator helper
+   into the manual just for visual jitter. */
+function miniRng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+interface Ellipse {
+  cx: number;
+  cy: number;
+  a: number;
+  b: number;
+  rot: number;
+}
+
+/* For each of the 16 (R/B/S/L) combinations, find the centroid of
+   sample points that fall in exactly that combination of ellipses.
+   Returns null for any combination that produces no samples (i.e.,
+   that region happens to be empty for this random ellipse layout —
+   rare but possible). */
+function computeRegionCentroids(
+  ellipses: Ellipse[],
+  W: number,
+  H: number
+): Array<{ x: number; y: number } | null> {
+  const sums = Array.from({ length: 16 }, () => ({ x: 0, y: 0, n: 0 }));
+  /* 1px-ish sampling on the viewBox — plenty for stable centroids
+     without being slow. */
+  const STEP = 4;
+  for (let y = -H / 2; y <= H / 2; y += STEP) {
+    for (let x = -W / 2; x <= W / 2; x += STEP) {
+      let key = 0;
+      for (let i = 0; i < ellipses.length; i++) {
+        if (pointInEllipse(x, y, ellipses[i])) {
+          key |= 1 << (3 - i); // i=0 → bit 3 (red), … i=3 → bit 0 (LED)
+        }
+      }
+      sums[key].x += x;
+      sums[key].y += y;
+      sums[key].n++;
+    }
+  }
+  return sums.map((s) => (s.n === 0 ? null : { x: s.x / s.n, y: s.y / s.n }));
+}
+
+function pointInEllipse(
+  x: number,
+  y: number,
+  e: { cx: number; cy: number; a: number; b: number; rot: number }
+): boolean {
+  const dx = x - e.cx;
+  const dy = y - e.cy;
+  const cos = Math.cos(-e.rot);
+  const sin = Math.sin(-e.rot);
+  const rx = dx * cos - dy * sin;
+  const ry = dx * sin + dy * cos;
+  return (rx / e.a) ** 2 + (ry / e.b) ** 2 <= 1;
 }
 
 function PasswordDictBlock({ words }: { words: string[] }) {
