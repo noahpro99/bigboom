@@ -26,10 +26,15 @@ import {
 } from "../../server/game";
 import { useDisplayTime } from "../../lib/useDisplayTime";
 import { play } from "../../lib/sound";
+import { tryMazeMove } from "../../lib/generator";
+import { getSessionId } from "../../lib/session";
 import type {
   GameState,
   Module,
   ButtonModuleConfig,
+  ModuleState,
+  MazeModuleConfig,
+  MemoryModuleConfig,
 } from "../../lib/types";
 import { Skull, Wifi, Activity } from "lucide-react";
 
@@ -43,6 +48,12 @@ interface BombViewProps {
 export function BombView({ gameState, readOnly = false }: BombViewProps) {
   const qc = useQueryClient();
   const { game, modules } = gameState;
+  const sessionId = getSessionId();
+  /* The exact key TanStack Query uses for the game-state poll. We
+     read/write this cache directly for optimistic updates so the bomb
+     reacts the instant a button is pressed instead of waiting for the
+     server round-trip. */
+  const gameQueryKey = ["game", game.id, sessionId];
   const timeRemaining = useDisplayTime(
     game.startedAt,
     game.timerSeconds,
@@ -52,6 +63,24 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ["game", game.id] });
 
+  /* Apply an immediate patch to one module's state inside the cached
+     game payload. Used by every action's onMutate so the visible
+     change lands the moment the user clicks. */
+  function patchModuleState(
+    moduleId: string,
+    updater: (s: ModuleState, mod: Module) => ModuleState
+  ): GameState | null {
+    const previous = qc.getQueryData<GameState>(gameQueryKey);
+    if (!previous) return null;
+    qc.setQueryData<GameState>(gameQueryKey, {
+      ...previous,
+      modules: previous.modules.map((m) =>
+        m.id === moduleId ? { ...m, state: updater(m.state, m) } : m
+      ),
+    });
+    return previous;
+  }
+
   // Fire the wrong-buzzer whenever a defuser action was scored incorrect.
   // The server returns { correct: boolean } on every scoring mutation; if it's
   // false we play the buzzer in addition to invalidating the query.
@@ -60,39 +89,184 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     invalidate();
   };
 
-  const cutMut = useMutation({ mutationFn: cutWire, onSuccess: onActionResult });
+  /* Generic shape of every action's onMutate context: the cached game
+     state before we touched it, so onError can roll back if the server
+     rejects. We cancel the in-flight refetch first so a pending poll
+     can't overwrite the optimistic patch. */
+  type Ctx = { previous: GameState | null };
+  async function snapshotAndCancel(): Promise<Ctx> {
+    await qc.cancelQueries({ queryKey: gameQueryKey });
+    return { previous: qc.getQueryData<GameState>(gameQueryKey) ?? null };
+  }
+  function rollback(ctx?: Ctx) {
+    if (ctx?.previous) qc.setQueryData(gameQueryKey, ctx.previous);
+  }
+
+  /* WIRE — the slot is added to cutWires immediately so the wire dims
+     before the server scoring round-trip. If it's wrong the server
+     responds correct=false (we play the buzzer); the cutWires entry
+     stays either way because the server records it on both branches. */
+  const cutMut = useMutation({
+    mutationFn: cutWire,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({
+        ...s,
+        cutWires: [...(s.cutWires ?? []), vars.data.slotIndex],
+      }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
+    onSuccess: onActionResult,
+  });
+  /* BUTTON — tap can't be predicted client-side (it's a server-side
+     check against the rule list), so no optimistic state change. */
   const tapMut = useMutation({ mutationFn: tapButton, onSuccess: onActionResult });
-  const startMut = useMutation({ mutationFn: startHold, onSuccess: invalidate });
+  /* BUTTON HOLD — set isHolding immediately so the LED strip appears
+     under the cap on press. */
+  const startMut = useMutation({
+    mutationFn: startHold,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({ ...s, isHolding: true }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
+    onSuccess: invalidate,
+  });
   const releaseMut = useMutation({
     mutationFn: releaseHold,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({ ...s, isHolding: false }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
+  /* SYMBOL — assume the press is correct and add the id to pressedIds.
+     If the server says correct=false, onActionResult plays the buzzer
+     and the subsequent invalidate refetches the real state (which on
+     wrong press is pressedIds=[] — the optimistic entry vanishes). */
   const pressMut = useMutation({
     mutationFn: pressSymbol,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({
+        ...s,
+        pressedIds: [...(s.pressedIds ?? []), vars.data.symbolId],
+      }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
+  /* SIMON — assume correct: increment the counter so the next pip
+     lights immediately. */
   const simonMut = useMutation({
     mutationFn: pressSimon,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({
+        ...s,
+        simonPressed: (s.simonPressed ?? 0) + 1,
+      }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
+  /* MAZE — we can compute the move's legality locally (the maze config
+     is on the client), so only apply the optimistic move if it would
+     actually be allowed. Skip the patch on wall collisions; the server
+     still validates and applies the strike. */
   const mazeMut = useMutation({
     mutationFn: moveMaze,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      const mod = modules.find((m) => m.id === vars.data.moduleId);
+      if (mod && mod.type === "maze") {
+        const cfg = mod.config as MazeModuleConfig;
+        const active = cfg.pool[cfg.activeIndex];
+        const from = mod.state.mazePos ?? cfg.start;
+        const next = tryMazeMove(active.walls, from, vars.data.direction);
+        if (next) {
+          patchModuleState(vars.data.moduleId, (s) => ({
+            ...s,
+            mazePos: next,
+            mazeTrail: [...(s.mazeTrail ?? [cfg.start]), next],
+          }));
+        }
+      }
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
+  /* MEMORY — assume correct: append a synthetic press to history so
+     the stage pip lights and the bomb advances. Server rolls back on
+     wrong. */
   const memoryMut = useMutation({
     mutationFn: pressMemory,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      const mod = modules.find((m) => m.id === vars.data.moduleId);
+      if (mod && mod.type === "memory") {
+        const cfg = mod.config as MemoryModuleConfig;
+        const stageIdx = mod.state.memoryHistory?.length ?? 0;
+        const stage = cfg.stages[stageIdx];
+        if (stage) {
+          const label = stage.labels[vars.data.position - 1] ?? 1;
+          patchModuleState(vars.data.moduleId, (s) => ({
+            ...s,
+            memoryHistory: [
+              ...(s.memoryHistory ?? []),
+              { position: vars.data.position, label },
+            ],
+          }));
+        }
+      }
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
+  /* MORSE DIAL — pure state setter. No correctness check, so the
+     optimistic update is always right. */
   const morseDialMut = useMutation({
     mutationFn: dialMorse,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({
+        ...s,
+        morseFreqIndex: vars.data.freqIndex,
+      }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: invalidate,
   });
   const morseTxMut = useMutation({
     mutationFn: transmitMorse,
     onSuccess: onActionResult,
   });
+  /* PASSWORD DIAL — also a pure state setter. */
   const pwCycleMut = useMutation({
     mutationFn: cyclePassword,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s, mod) => {
+        const cur =
+          s.passwordDials ?? new Array((mod.config as { columns: string[][] }).columns.length).fill(0);
+        const colLen = (mod.config as { columns: string[][] }).columns[vars.data.col].length;
+        const next = [...cur];
+        next[vars.data.col] =
+          (((cur[vars.data.col] ?? 0) + vars.data.delta) % colLen + colLen) % colLen;
+        return { ...s, passwordDials: next };
+      });
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: invalidate,
   });
   const pwSubmitMut = useMutation({
