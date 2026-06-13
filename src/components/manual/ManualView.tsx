@@ -879,12 +879,20 @@ function WireSeqTablesBlock({
 }
 
 /* Who's On First — two tables, side-by-side on desktop, stacked on
-   mobile. The display-position panel maps each pool word to a button
-   POSITION in the bomb's 2-column × 3-row button grid. Position 1-6
-   is ambiguous on its own ("which 3? upper-left? middle-left?"), so
-   we render a tiny 2×3 grid icon next to each word with the target
-   cell filled — the expert reads the layout directly. The priority
-   table is each word's ordered priority list. */
+   mobile. This module is NOT "press the button at this position". The
+   rule is a two-step lookup:
+
+     1. Look up the DISPLAY word in the position table. The filled
+        cell shows which button on the bomb is the "key button".
+     2. Read the WORD printed on that key button, find that word in
+        the priority table, and press the first button (scanning the
+        bomb top-to-bottom, left-to-right) whose label appears in
+        that priority list.
+
+   The position panel renders a tiny 2×3 grid icon next to each pool
+   word with the key-button cell filled. We label the panel "key
+   button" (not "button to press") and put a small how-to hint at the
+   top so the expert doesn't skip step 2 by accident. */
 function WhoTablesBlock({
   pool,
   displayPosTable,
@@ -895,46 +903,64 @@ function WhoTablesBlock({
   priorityTable: Record<string, string[]>;
 }) {
   /* Alphabetical scan order matches what an expert would do under
-     pressure ("D… DISPLAY… here it is — upper-right"). */
+     pressure ("D… DISPLAY… here it is, key button is middle-left"). */
   const sortedPool = [...pool].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   return (
-    <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-5">
-      <div>
-        <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1 flex items-baseline justify-between gap-3">
-          <span>Display → button position</span>
-          <span className="text-[8px] tracking-[0.15em] text-ink/65 font-normal normal-case">
-            (filled = press this one)
-          </span>
-        </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-serif text-[12px]">
-          {sortedPool.map((w) => (
-            <div
-              key={w}
-              className="flex items-center gap-2 leading-snug"
-            >
-              <PositionGrid pos={displayPosTable[w]} />
-              <span className="font-bold ink-text-bold tracking-wide flex-1 truncate">
-                {w}
-              </span>
-            </div>
-          ))}
-        </div>
+    <div className="mb-5">
+      {/* Procedure hint — the most common mistake on this module is
+         skipping step 2 and pressing the key button directly. */}
+      <div className="border border-ink/40 bg-ink/[0.04] rounded-sm px-3 py-2 mb-4 font-serif text-[12px] leading-snug">
+        <span className="font-bold ink-text-bold uppercase tracking-[0.15em] text-[10px]">
+          Procedure ·{" "}
+        </span>
+        (1) Read the DISPLAY word, look it up below → the filled cell
+        is the <em>key button</em>. (2) Read the WORD ON the key
+        button, look that word up in the priority table → press the
+        first priority-list word that appears on ANY button (scanning
+        the bomb top-to-bottom, left-to-right).
       </div>
-      <div>
-        <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1">
-          Word → priority order
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-5">
+        <div>
+          <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1 flex items-baseline justify-between gap-3">
+            <span>Display word → key button</span>
+            <span className="text-[8px] tracking-[0.15em] text-ink/65 font-normal normal-case">
+              (read its label — don't press it)
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-serif text-[12px]">
+            {sortedPool.map((w) => (
+              <div
+                key={w}
+                className="flex items-center gap-2 leading-snug"
+              >
+                <PositionGrid pos={displayPosTable[w]} />
+                <span className="font-bold ink-text-bold tracking-wide flex-1 truncate">
+                  {w}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="font-serif text-[12px] leading-snug space-y-1.5">
-          {sortedPool.map((w) => (
-            <div key={w}>
-              <span className="font-bold ink-text-bold tracking-wide">
-                {w}
-              </span>
-              <span className="text-ink/85 ml-2">
-                {priorityTable[w].join(", ")}
-              </span>
-            </div>
-          ))}
+        <div>
+          <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1 flex items-baseline justify-between gap-3">
+            <span>Key-button word → priority list</span>
+            <span className="text-[8px] tracking-[0.15em] text-ink/65 font-normal normal-case">
+              (press first match on bomb)
+            </span>
+          </div>
+          <div className="font-serif text-[12px] leading-snug space-y-1.5">
+            {sortedPool.map((w) => (
+              <div key={w}>
+                <span className="font-bold ink-text-bold tracking-wide">
+                  {w}
+                </span>
+                <span className="text-ink/85 ml-2">
+                  {priorityTable[w].join(", ")}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
