@@ -5,7 +5,10 @@ export type StripColor = "red" | "blue" | "yellow" | "white";
 export type SimonColor = "red" | "blue" | "yellow" | "green";
 export type Direction = "up" | "down" | "left" | "right";
 export type GameStatus = "waiting" | "active" | "won" | "lost";
-export type PlayerRole = "defuser" | "expert";
+/* defuser → operates the bomb (max ONE per room — the server bounces
+   2nd-claim attempts back to spectator). expert → reads the manual.
+   spectator → joins the bomb view but cannot interact with any module. */
+export type PlayerRole = "defuser" | "expert" | "spectator";
 export type ModuleType =
   | "wire"
   | "button"
@@ -483,7 +486,13 @@ export interface Game {
 
 export interface GameState {
   game: Game;
-  players: { role: PlayerRole; joinedAt: number }[];
+  players: {
+    role: PlayerRole;
+    joinedAt: number;
+    /* Display name when the session is signed in, otherwise null. */
+    username: string | null;
+    isMe: boolean;
+  }[];
   modules: Module[];
   timeRemaining: number;
   myRole: PlayerRole | null;

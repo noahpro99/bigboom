@@ -25,6 +25,7 @@ import {
   setInGame,
 } from "../lib/sound";
 import type {
+  GameState,
   ModuleType,
   PlayerRole,
   Preset,
@@ -49,6 +50,8 @@ import {
   ArrowRight,
   ShieldCheck,
   Skull,
+  Eye,
+  User as UserIcon,
 } from "lucide-react";
 
 export const Route = createFileRoute("/game/$gameId")({
@@ -219,6 +222,7 @@ function GamePage() {
     return <LobbyView
       gameId={gameId}
       playerRole={playerRole}
+      players={players}
       hasDefuser={hasDefuser}
       hasExpert={hasExpert}
       bothPresent={bothPresent}
@@ -251,10 +255,16 @@ function GamePage() {
       {/* Headless audio side-effect — fires for both roles */}
       <SoundLayer gameState={gameState} />
 
-      {playerRole === "defuser" ? (
-        <BombView gameState={gameState} />
-      ) : (
+      {/* Expert reads the manual; defuser and spectator both see the
+         bomb — but spectator interactions are gated by the readOnly
+         flag that BombView passes down to every module. */}
+      {playerRole === "expert" ? (
         <ManualView seed={game.seed} moduleTypes={game.moduleTypes} />
+      ) : (
+        <BombView
+          gameState={gameState}
+          readOnly={playerRole === "spectator"}
+        />
       )}
 
       {isOver && (
@@ -528,9 +538,61 @@ function ConfigSection({
   );
 }
 
+/* Single row of the lobby's Personnel list. Defuser/expert/spectator
+   each get a distinct icon + accent; signed-in sessions show their
+   username, anonymous sessions show "(guest)". The current session
+   is highlighted so the user can find themselves at a glance. */
+function PersonnelRow({
+  player,
+}: {
+  player: GameState["players"][number];
+}) {
+  const Icon =
+    player.role === "defuser"
+      ? Bomb
+      : player.role === "expert"
+      ? BookOpen
+      : Eye;
+  const accent =
+    player.role === "defuser"
+      ? "text-amber-glow"
+      : player.role === "expert"
+      ? "text-cyan-rad"
+      : "text-bone-dim";
+  const name = player.username ?? "guest";
+  return (
+    <li
+      className={`flex items-center gap-2 px-2 py-1 border ${
+        player.isMe
+          ? "border-phosphor/40 bg-phosphor/5"
+          : "border-rib bg-void/30"
+      }`}
+    >
+      <Icon size={13} strokeWidth={2.2} className={accent} />
+      <span className="flex items-center gap-1 font-mono text-[12px] text-bone tracking-wide min-w-0">
+        {!player.username && (
+          <UserIcon size={10} className="text-bone-dim/50 shrink-0" />
+        )}
+        <span className="truncate">{name}</span>
+        {player.isMe && (
+          <span className="text-[9px] uppercase tracking-[0.25em] text-phosphor/80 ml-1">
+            you
+          </span>
+        )}
+      </span>
+      <span
+        className={`ml-auto text-[9px] font-mono uppercase tracking-[0.22em] ${accent}`}
+      >
+        {player.role}
+      </span>
+    </li>
+  );
+}
+
 interface LobbyViewProps {
   gameId: string;
   playerRole: PlayerRole;
+  players: GameState["players"];
   hasDefuser: boolean;
   hasExpert: boolean;
   bothPresent: boolean;
@@ -556,6 +618,7 @@ interface LobbyViewProps {
 function LobbyView({
   gameId,
   playerRole,
+  players,
   hasDefuser,
   hasExpert,
   bothPresent,
@@ -580,6 +643,7 @@ function LobbyView({
       sub: "Operates the bomb",
       Icon: Bomb,
       claimed: hasDefuser,
+      claimedBySomeoneElse: hasDefuser && playerRole !== "defuser",
       accent: "text-amber-glow",
       bg: "bg-amber/10",
       border: "border-amber/50",
@@ -590,9 +654,21 @@ function LobbyView({
       sub: "Reads the manual",
       Icon: BookOpen,
       claimed: hasExpert,
+      claimedBySomeoneElse: false,
       accent: "text-cyan-rad",
       bg: "bg-cyan-rad/8",
       border: "border-cyan-rad/45",
+    },
+    {
+      role: "spectator" as PlayerRole,
+      label: "Spectator",
+      sub: "Watch — no controls",
+      Icon: Eye,
+      claimed: false,
+      claimedBySomeoneElse: false,
+      accent: "text-bone-dim",
+      bg: "bg-bone/5",
+      border: "border-steel-light/50",
     },
   ];
 
@@ -664,35 +740,68 @@ function LobbyView({
             </button>
           </div>
 
+          {/* Personnel — who's currently in the room. */}
+          <div className="p-5 border-b border-rib/60">
+            <div className="flex items-baseline justify-between mb-2">
+              <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
+                Personnel
+              </span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.22em] text-bone-dim/60">
+                {players.length} in room
+              </span>
+            </div>
+            <ul className="space-y-1">
+              {players.map((p, i) => (
+                <PersonnelRow key={`${i}-${p.role}`} player={p} />
+              ))}
+              {players.length === 0 && (
+                <li className="text-bone-dim/50 font-mono text-[11px] tracking-[0.15em]">
+                  Awaiting any session…
+                </li>
+              )}
+            </ul>
+          </div>
+
           {/* Roles */}
           <div className="p-5 border-b border-rib/60">
             <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim mb-3">
               Pick a Role
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2 sm:gap-3">
               {roles.map((r) => {
                 const isMine = r.role === playerRole;
+                /* Defuser is a single-claim slot — if someone else
+                   already has it, this tile is locked. The server
+                   rejects the claim too, so it's belt-and-suspenders. */
+                const lockedByOther = r.claimedBySomeoneElse;
                 const Icon = r.Icon;
                 return (
                   <button
                     key={r.role}
                     onClick={() => onPick(r.role)}
-                    disabled={isMine || switchPending}
-                    className={`relative px-4 py-4 border transition-all text-left ${
+                    disabled={isMine || switchPending || lockedByOther}
+                    title={
+                      lockedByOther
+                        ? "Defuser slot is already taken"
+                        : undefined
+                    }
+                    className={`relative px-3 py-3 sm:px-4 sm:py-4 border transition-all text-left ${
                       isMine
                         ? `${r.border} ${r.bg} cursor-default`
+                        : lockedByOther
+                        ? "border-rib opacity-50 cursor-not-allowed"
                         : "border-rib hover:border-steel-light cursor-pointer"
                     }`}
                   >
                     <Icon
-                      size={44}
+                      size={32}
                       className={isMine ? r.accent : "text-bone-dim"}
                       strokeWidth={1.75}
                     />
-                    <div className={`font-stencil text-lg mt-2 tracking-wider uppercase ${isMine ? "text-bone" : "text-bone-dim"}`}>
+                    <div className={`font-stencil text-base mt-1.5 tracking-wider uppercase ${isMine ? "text-bone" : "text-bone-dim"}`}>
                       {r.label}
                     </div>
-                    <div className="text-[10px] font-mono uppercase tracking-widest text-bone-dim/60 mb-1.5">
+                    <div className="text-[9px] font-mono uppercase tracking-[0.18em] text-bone-dim/60 mb-1.5 leading-tight">
                       {r.sub}
                     </div>
                     <div

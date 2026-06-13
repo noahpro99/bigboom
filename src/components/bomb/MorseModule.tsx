@@ -16,6 +16,10 @@ interface MorseModuleProps {
   disabled: boolean;
   onDial: (freqIndex: number) => void;
   onTransmit: () => void;
+  /* AUDIO hold button is pure feedback (no game-state effect), so
+     spectator/helper sessions can use it even when their other
+     interactions are disabled. Defaults to !disabled. */
+  canListen?: boolean;
 }
 
 const DOT_MS = 220;
@@ -57,7 +61,9 @@ export function MorseModule({
   disabled,
   onDial,
   onTransmit,
+  canListen,
 }: MorseModuleProps) {
+  const audioAllowed = canListen ?? !disabled;
   const config = module.config as MorseModuleConfig;
   const active = config.pool[config.activeIndex];
   const currentFreq = module.state.morseFreqIndex ?? 0;
@@ -109,7 +115,7 @@ export function MorseModule({
      match the CURRENT LED phase so the very first dot/dash the user
      hears lines up with the light they were already watching. */
   function startListening() {
-    if (disabled || module.solved || listening) return;
+    if (!audioAllowed || module.solved || listening) return;
     setListeningLocal(true);
     setListening(true);
     startMorseTone(beaconHz);
@@ -196,8 +202,9 @@ export function MorseModule({
         />
         <button
           /* Pointer events instead of onMouseDown/Up so touch + mouse +
-             pen all work the same. */
-          disabled={disabled || module.solved}
+             pen all work the same. Spectator/helper sessions can still
+             hold AUDIO even though their other interactions are off. */
+          disabled={!audioAllowed || module.solved}
           onPointerDown={(e) => {
             e.preventDefault();
             (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);

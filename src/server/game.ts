@@ -268,6 +268,23 @@ function upsertPlayer(
   );
 }
 
+/* Is another live session already claiming the defuser slot? Used to
+   refuse a 2nd defuser claim so the bomb only ever has one operator. */
+function defuserHeldBy(
+  db: ReturnType<typeof getDb>,
+  gameId: string,
+  excludingSessionId: string
+): boolean {
+  const row = db
+    .query(
+      `SELECT 1 FROM game_players
+       WHERE game_id = ? AND role = 'defuser' AND session_id != ?
+       AND last_seen > unixepoch() - ?`
+    )
+    .get(gameId, excludingSessionId, ACTIVE_SECONDS);
+  return row != null;
+}
+
 export const switchRole = createServerFn({ method: "POST" })
   .validator(
     (data: {
@@ -278,12 +295,22 @@ export const switchRole = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const db = getDb();
+    /* Refuse 2nd defuser. If the slot is taken by someone else, bounce
+       them to spectator — the client UI also gates this but the server
+       is the source of truth. */
+    if (
+      data.toRole === "defuser" &&
+      defuserHeldBy(db, data.gameId, data.sessionId)
+    ) {
+      upsertPlayer(db, data.gameId, data.sessionId, "spectator");
+      return { ok: false as const, error: "Defuser slot already taken" };
+    }
     upsertPlayer(db, data.gameId, data.sessionId, data.toRole);
-    return { ok: true };
+    return { ok: true as const };
   });
 
 // Visitor joins a game. If this session already has a role, keep it; otherwise
-// assign whichever role is currently open (default: expert).
+// assign whichever role is currently open (default: spectator).
 export const joinGame = createServerFn({ method: "POST" })
   .validator(
     (data: { gameId: string; sessionId: string }) => data
@@ -311,7 +338,9 @@ export const joinGame = createServerFn({ method: "POST" })
       return { ok: true as const, role: existing.role };
     }
 
-    // First time this session has joined — pick whichever slot is open
+    // First time this session has joined — pick whichever slot is open.
+    // Defuser is single-claim; everyone else after the first gets expert
+    // or spectator depending on whether expert is filled.
     const activeRoles = db
       .query(
         "SELECT DISTINCT role FROM game_players WHERE game_id = ? AND last_seen > unixepoch() - ?"
@@ -323,7 +352,7 @@ export const joinGame = createServerFn({ method: "POST" })
       ? "defuser"
       : !hasExpert
       ? "expert"
-      : "expert";
+      : "spectator";
 
     upsertPlayer(db, data.gameId, data.sessionId, assigned);
     return { ok: true as const, role: assigned };
@@ -364,16 +393,22 @@ export const getGameState = createServerFn({ method: "GET" })
 
     if (!gameRow) return null;
 
-    const players = db
+    /* One row per LIVE session in the room, with username if signed in.
+       Lobby uses this to show who's here and what role they have. */
+    const playerRows = db
       .query(
-        `SELECT DISTINCT role, MAX(last_seen) AS last_seen
-         FROM game_players
-         WHERE game_id = ? AND last_seen > unixepoch() - ?
-         GROUP BY role`
+        `SELECT gp.session_id, gp.role, gp.last_seen, u.username
+         FROM game_players gp
+         LEFT JOIN user_sessions us ON us.session_id = gp.session_id
+         LEFT JOIN users u ON u.id = us.user_id
+         WHERE gp.game_id = ? AND gp.last_seen > unixepoch() - ?
+         ORDER BY gp.last_seen DESC`
       )
       .all(data.gameId, ACTIVE_SECONDS) as {
+      session_id: string;
       role: PlayerRole;
       last_seen: number;
+      username: string | null;
     }[];
 
     const moduleRows = db
@@ -439,7 +474,12 @@ export const getGameState = createServerFn({ method: "GET" })
         preset: gameRow.preset as Preset,
         moduleTypes,
       },
-      players: players.map((p) => ({ role: p.role, joinedAt: p.last_seen })),
+      players: playerRows.map((p) => ({
+        role: p.role,
+        joinedAt: p.last_seen,
+        username: p.username ?? null,
+        isMe: p.session_id === data.sessionId,
+      })),
       modules,
       timeRemaining,
       myRole,
@@ -636,8 +676,16 @@ function recordGameResult(gameId: string, status: "won" | "lost") {
     | null;
   if (!row) return;
   const now = Math.floor(Date.now() / 1000);
+  /* Wall-clock since the bomb was armed. We CLAMP it to timer_seconds
+     so the recorded duration matches what the player saw on the LED —
+     for timer-expiry losses, checkTimer polls every 5s and can flip
+     the status up to ~5s past the real expiry, which would otherwise
+     log a duration of e.g. 5:03 for a 5:00 timer. */
+  const elapsed = row.started_at !== null ? now - row.started_at : null;
   const durationMs =
-    row.started_at !== null ? (now - row.started_at) * 1000 : null;
+    elapsed === null
+      ? null
+      : Math.max(0, Math.min(elapsed, row.timer_seconds)) * 1000;
   db.run(
     `INSERT OR IGNORE INTO game_results
        (game_id, preset, timer_seconds, module_set, status, duration_ms)

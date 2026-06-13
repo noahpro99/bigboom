@@ -35,9 +35,12 @@ import { Skull, Wifi, Activity } from "lucide-react";
 
 interface BombViewProps {
   gameState: GameState;
+  /* True for spectators — they see the bomb but every interactive
+     control is gated through `disabled`. */
+  readOnly?: boolean;
 }
 
-export function BombView({ gameState }: BombViewProps) {
+export function BombView({ gameState, readOnly = false }: BombViewProps) {
   const qc = useQueryClient();
   const { game, modules } = gameState;
   const timeRemaining = useDisplayTime(
@@ -97,7 +100,9 @@ export function BombView({ gameState }: BombViewProps) {
     onSuccess: onActionResult,
   });
 
-  const disabled = game.status !== "active";
+  /* Spectators see everything but can't interact — fold into the same
+     `disabled` gate every module already checks. */
+  const disabled = game.status !== "active" || readOnly;
 
   /* batteryCount is a bomb-wide attribute stamped on the Button module's
      config (only one Button module per bomb). Pulled out here so the
@@ -291,6 +296,10 @@ export function BombView({ gameState }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
+                    /* Spectators can hold AUDIO to listen even though
+                       they can't dial or transmit. Game must still be
+                       live (not won/lost/waiting). */
+                    canListen={game.status === "active"}
                     onDial={(freqIndex) =>
                       morseDialMut.mutate({
                         data: { moduleId: mod.id, freqIndex },
