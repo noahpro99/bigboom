@@ -47,7 +47,7 @@ export function ButtonModule({
     if (!isHoldingServer) setLocalHolding(false);
   }, [isHoldingServer]);
 
-  function handleMouseDown() {
+  function handlePressDown() {
     if (disabled || module.solved || holding) return;
     pressStartRef.current = Date.now();
     holdTimerRef.current = window.setTimeout(() => {
@@ -57,7 +57,7 @@ export function ButtonModule({
     }, HOLD_THRESHOLD_MS);
   }
 
-  function handleMouseUp() {
+  function handlePressUp() {
     if (disabled || module.solved) return;
     if (holdTimerRef.current !== null) {
       clearTimeout(holdTimerRef.current);
@@ -77,11 +77,19 @@ export function ButtonModule({
     }
   }
 
-  function handleMouseLeave() {
-    if (holdTimerRef.current !== null && !localHolding) {
+  function handleCancel() {
+    /* Treated like a release-without-action: clear the pending-hold
+       timer and abandon the press without firing a tap. If we ALREADY
+       started a hold, we must release it server-side so the bomb
+       doesn't sit stuck in held state. */
+    if (holdTimerRef.current !== null) {
       clearTimeout(holdTimerRef.current);
       holdTimerRef.current = null;
-      pressStartRef.current = null;
+    }
+    pressStartRef.current = null;
+    if (localHolding) {
+      play("buttonUp");
+      onHoldRelease();
     }
   }
 
@@ -143,20 +151,26 @@ export function ButtonModule({
       </div>
 
       <div className="flex flex-col items-center gap-4 pt-1">
-        {/* The button */}
+        {/* The button — pointer events instead of split mouse/touch so
+            touch + mouse + pen all use the same code path. We capture
+            the pointer so a finger sliding off the cap still releases
+            cleanly. iOS would otherwise pop up its tap-and-hold
+            callout / context menu on long press; we suppress that via
+            CSS (touch-action: none, -webkit-touch-callout: none) and
+            onContextMenu={preventDefault}. */}
         <button
           disabled={disabled || module.solved}
-          onMouseDown={handleMouseDown}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseLeave}
-          onTouchStart={(e) => {
+          onPointerDown={(e) => {
             e.preventDefault();
-            handleMouseDown();
+            (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+            handlePressDown();
           }}
-          onTouchEnd={(e) => {
+          onPointerUp={(e) => {
             e.preventDefault();
-            handleMouseUp();
+            handlePressUp();
           }}
+          onPointerCancel={handleCancel}
+          onContextMenu={(e) => e.preventDefault()}
           className={`relative w-28 h-28 rounded-full font-stencil text-base tracking-[0.15em] uppercase select-none transition-all duration-100 ${
             disabled || module.solved
               ? "opacity-50 cursor-default"
@@ -174,6 +188,11 @@ export function ButtonModule({
             boxShadow: holding
               ? `inset 0 5px 14px rgba(0,0,0,0.7), inset 0 -2px 4px rgba(255,255,255,0.18), 0 0 34px ${bgColor}aa, 0 0 0 4px rgba(0,0,0,0.55), 0 0 0 8px rgba(80,100,140,0.18)`
               : `inset 0 2px 1px rgba(255,255,255,0.4), inset 0 -6px 12px rgba(0,0,0,0.4), 0 8px 0 rgba(0,0,0,0.6), 0 12px 18px rgba(0,0,0,0.55), 0 0 28px ${bgColor}55, 0 0 0 4px rgba(0,0,0,0.55), 0 0 0 8px rgba(80,100,140,0.18)`,
+            touchAction: "none",
+            WebkitTouchCallout: "none",
+            WebkitUserSelect: "none",
+            userSelect: "none",
+            WebkitTapHighlightColor: "transparent",
           }}
         >
           <span className="relative z-10">{config.label}</span>

@@ -221,12 +221,20 @@ export function MorseModule({
                escape if e.preventDefault didn't latch. */
             if (e.pointerType !== "touch") stopListening();
           }}
+          onContextMenu={(e) => e.preventDefault()}
           aria-label="Hold to listen to morse beacon"
           className={`btn-3d px-3 py-2 rounded-sm flex items-center gap-1.5 font-stencil text-[12px] tracking-[0.2em] select-none disabled:opacity-50 ${
             listening
               ? "btn-3d-armed text-phosphor"
               : "text-bone"
           }`}
+          style={{
+            touchAction: "none",
+            WebkitTouchCallout: "none",
+            WebkitUserSelect: "none",
+            userSelect: "none",
+            WebkitTapHighlightColor: "transparent",
+          }}
         >
           <Headphones size={14} strokeWidth={2.4} />
           AUDIO
