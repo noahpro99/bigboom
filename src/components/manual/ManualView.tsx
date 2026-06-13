@@ -13,6 +13,8 @@ import type {
   MorseEntry,
   ModuleType,
   CompWireOutcome,
+  WireSeqColor,
+  WireSeqLetter,
 } from "../../lib/types";
 import { MORSE_FREQS } from "../../lib/types";
 import {
@@ -812,6 +814,129 @@ function MorseTableBlock({ pool }: { pool: MorseEntry[] }) {
    candidate aloud and confirming letter-by-letter is the point: it
    forces back-and-forth instead of letting the expert solve in their
    head. */
+/* Wire Sequences — three per-colour tables. Each table has 9 rows
+   (1st-9th occurrence of that colour); each cell says which letters
+   to cut. Empty row = "don't cut anything for the Nth wire of this
+   colour". */
+function WireSeqTablesBlock({
+  tables,
+}: {
+  tables: Record<WireSeqColor, WireSeqLetter[][]>;
+}) {
+  const COLORS: WireSeqColor[] = ["red", "blue", "black"];
+  const COLOR_INK: Record<WireSeqColor, string> = {
+    red: "#a8201a",
+    blue: "#1d3f8e",
+    black: "#1f2937",
+  };
+  return (
+    <div className="mb-5 grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {COLORS.map((c) => (
+        <div key={c}>
+          <div
+            className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] mb-1 ink-text-bold"
+            style={{ color: COLOR_INK[c] }}
+          >
+            {c} wires
+          </div>
+          <table className="w-full border-collapse font-serif text-[13px] ink-text">
+            <thead>
+              <tr>
+                <th className="text-left font-bold text-[10px] uppercase tracking-[0.18em] pb-0.5 pr-2 border-b border-ink/40 ink-text-bold">
+                  Nth
+                </th>
+                <th className="text-left font-bold text-[10px] uppercase tracking-[0.18em] pb-0.5 border-b border-ink/40 ink-text-bold">
+                  Cut
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {tables[c].map((row, i) => (
+                <tr
+                  key={i}
+                  className="border-b border-ink/20 last:border-b-0"
+                >
+                  <td className="py-1 pr-2 font-mono text-ink/75 tabular-nums w-6">
+                    {i + 1}
+                  </td>
+                  <td className="py-1 font-stencil tracking-[0.18em] ink-text-bold">
+                    {row.length === 0 ? (
+                      <span className="text-ink/45 italic font-serif tracking-normal">
+                        none
+                      </span>
+                    ) : (
+                      row.join(" ")
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Who's On First — two tables, side-by-side on desktop, stacked on
+   mobile. The display-position table maps each pool word to a button
+   position 1-6; the priority table is each word's ordered priority
+   list. Both fit on one manual page because the pool is bounded. */
+function WhoTablesBlock({
+  pool,
+  displayPosTable,
+  priorityTable,
+}: {
+  pool: string[];
+  displayPosTable: Record<string, number>;
+  priorityTable: Record<string, string[]>;
+}) {
+  /* Alphabetical scan order matches what an expert would do under
+     pressure ("D… DISPLAY… here it is, position 3"). */
+  const sortedPool = [...pool].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return (
+    <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-5">
+      <div>
+        <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1">
+          Display → button position
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-serif text-[12px]">
+          {sortedPool.map((w) => (
+            <div
+              key={w}
+              className="flex items-baseline gap-2 leading-snug"
+            >
+              <span className="font-bold ink-text-bold tracking-wide flex-1 truncate">
+                {w}
+              </span>
+              <span className="font-mono text-ink/85 tabular-nums">
+                {displayPosTable[w]}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1">
+          Word → priority order
+        </div>
+        <div className="font-serif text-[12px] leading-snug space-y-1.5">
+          {sortedPool.map((w) => (
+            <div key={w}>
+              <span className="font-bold ink-text-bold tracking-wide">
+                {w}
+              </span>
+              <span className="text-ink/85 ml-2">
+                {priorityTable[w].join(", ")}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* Complicated Wires decision table. The 16 rows are (R/B/S/L)
    combinations — Red, Blue, Star, LED. Each cell shows the per-bomb
    outcome shorthand (Cut / No / Odd / Batt / Vowel), with a small
@@ -1220,6 +1345,21 @@ function ManualPageView({
 
             if (block.type === 'compWireTable') {
               return <CompWireTableBlock key={bi} table={block.table} />;
+            }
+
+            if (block.type === 'whoTables') {
+              return (
+                <WhoTablesBlock
+                  key={bi}
+                  pool={block.pool}
+                  displayPosTable={block.displayPosTable}
+                  priorityTable={block.priorityTable}
+                />
+              );
+            }
+
+            if (block.type === 'wireSeqTables') {
+              return <WireSeqTablesBlock key={bi} tables={block.tables} />;
             }
 
             if (block.type === 'symbolColumns') {

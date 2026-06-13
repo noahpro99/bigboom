@@ -18,7 +18,9 @@ export type ModuleType =
   | "memory"
   | "morse"
   | "password"
-  | "compWires";
+  | "compWires"
+  | "whoFirst"
+  | "wireSeq";
 
 export type Preset = "quick" | "standard" | "hardcore" | "custom";
 
@@ -42,6 +44,8 @@ export const ALL_OPTIONAL_MODULES: ModuleType[] = [
   "morse",
   "password",
   "compWires",
+  "whoFirst",
+  "wireSeq",
 ];
 
 export const PRESET_CONFIGS: Record<
@@ -60,7 +64,7 @@ export const PRESET_CONFIGS: Record<
   },
   hardcore: {
     preset: "hardcore",
-    timerSeconds: 540,
+    timerSeconds: 600,
     moduleTypes: [
       "wire",
       "button",
@@ -71,6 +75,8 @@ export const PRESET_CONFIGS: Record<
       "morse",
       "password",
       "compWires",
+      "whoFirst",
+      "wireSeq",
     ],
   },
 };
@@ -124,6 +130,8 @@ export function moduleTypesFromCounts(
     "morse",
     "password",
     "compWires",
+    "whoFirst",
+    "wireSeq",
   ];
   const out: ModuleType[] = [];
   for (const t of order) {
@@ -147,6 +155,8 @@ export function moduleCounts(
     morse: 0,
     password: 0,
     compWires: 0,
+    whoFirst: 0,
+    wireSeq: 0,
   };
   for (const t of types) out[t]++;
   return out;
@@ -167,6 +177,8 @@ const PER_MODULE_SECONDS: Record<ModuleType, number> = {
   morse: 55,
   password: 50,
   compWires: 55,
+  whoFirst: 70,
+  wireSeq: 55,
 };
 const TIMER_BASELINE_SECONDS = 30;
 
@@ -285,6 +297,8 @@ export interface ModuleState {
   morseFreqIndex?: number;       // morse module: currently-dialled frequency index
   passwordDials?: number[];      // password module: per-column letter index (0..LETTERS-1)
   cutCompWires?: number[];       // complicated-wires module: which slots have been cut
+  whoStage?: number;             // whos-on-first: current 0-indexed stage (0..WHO_STAGES-1)
+  cutWireSeqs?: number[];        // wire-sequences module: which slot indices have been cut
 }
 
 // Complicated Wires — KTaNE-style Venn-diagram cut/skip puzzle.
@@ -327,6 +341,82 @@ export function compWireKey(w: CompWire): number {
     (w.hasStar ? 2 : 0) |
     (w.hasLED ? 1 : 0)
   );
+}
+
+// Who's On First — KTaNE cross-reference. The bomb shows a small
+// "display" word + 6 button-words arranged 2×3. Procedure:
+//   1. Look up the display word in the *position* table → tells you
+//      which button position (1-6) to read.
+//   2. Read the word printed on that button → that's a "key" word.
+//   3. Look up the key word in the *priority* table → an ordered list.
+//   4. Press the first word in that priority list that appears on
+//      any of the 6 buttons.
+//
+// Solve 3 stages of this in a row to defuse. Wrong press → strike +
+// stage resets to 1 with a fresh display + button set.
+//
+// Procedural advance over KTaNE: KTaNE has a fixed 28-entry display
+// table and 28 priority lists baked into the manual; here both are
+// freshly randomised per bomb from the seed, plus the wordlist itself
+// is sampled from a bigger pool so the manual feels unique each game.
+export const WHO_BUTTON_COUNT = 6;
+export const WHO_STAGES = 3;
+/* Length of each priority list in the manual — short enough to scan
+   fast, long enough that the solution isn't always the same. */
+export const WHO_PRIORITY_LEN = 10;
+
+export interface WhoStage {
+  /* Word shown on the small LED display this stage. */
+  display: string;
+  /* The six words printed on the buttons, in DOM order (1=top-left,
+     2=top-right, 3=mid-left, …). */
+  buttons: string[];
+}
+
+export interface WhosOnFirstModuleConfig {
+  /* The per-bomb word pool — only words from this list appear on the
+     display or buttons. Surfaced in the manual via the lookup tables
+     below. */
+  pool: string[];
+  /* For each pool word: which button POSITION (1-6) to read when the
+     display shows it. */
+  displayPosTable: Record<string, number>;
+  /* For each pool word: an ordered priority list of pool words. To
+     resolve a stage, look up the word on the position the display
+     pointed at, then press the first word from this list that's on
+     any of the visible buttons. */
+  priorityTable: Record<string, string[]>;
+  /* Pre-generated stages — three of them. Generated at bomb-creation
+     time so the same lookup tables always produce a valid solvable
+     stage; the bomb just walks through them on solve. */
+  stages: WhoStage[];
+}
+
+// Wire Sequences — KTaNE-style "long ladder of wires" puzzle.
+// Each wire has a colour (red, blue, or black) and one of three target
+// letters (A, B, or C) printed next to it. The rule for whether to cut
+// it depends on the RUNNING OCCURRENCE COUNT of that colour: the 1st
+// red wire follows one rule, the 2nd red wire another, etc. Up to 9
+// of each colour in the module.
+//
+// Procedural advance over KTaNE: KTaNE's rule tables are fixed (the
+// canonical manual has one table per colour). Here, every Wire
+// Sequences module gets a freshly randomised set of three 9-row
+// tables.
+export type WireSeqColor = "red" | "blue" | "black";
+export type WireSeqLetter = "A" | "B" | "C";
+
+export interface WireSeqWire {
+  color: WireSeqColor;
+  letter: WireSeqLetter;
+}
+
+export interface WireSeqModuleConfig {
+  wires: WireSeqWire[];
+  /* Per colour: 9 rows, indexed by occurrence (1st-9th). Each row is
+     a SET of letters: if the current wire's letter is in that row's
+     set, cut it. Empty set = don't cut anything. */
+  tables: Record<WireSeqColor, WireSeqLetter[][]>;
 }
 
 // Maze — a 6x6 grid of cells with walls between cells. Walls are stored
@@ -510,7 +600,9 @@ export interface Module {
     | MemoryModuleConfig
     | MorseModuleConfig
     | PasswordModuleConfig
-    | ComplicatedWiresModuleConfig;
+    | ComplicatedWiresModuleConfig
+    | WhosOnFirstModuleConfig
+    | WireSeqModuleConfig;
   state: ModuleState;
   solved: boolean;
   struck: boolean;
@@ -573,4 +665,14 @@ export type ManualContent =
   | { type: "morseAlphabet" }
   | { type: "morseTable"; pool: MorseEntry[] }
   | { type: "passwordDict"; words: string[] }
-  | { type: "compWireTable"; table: CompWireOutcome[] };
+  | { type: "compWireTable"; table: CompWireOutcome[] }
+  | {
+      type: "whoTables";
+      pool: string[];
+      displayPosTable: Record<string, number>;
+      priorityTable: Record<string, string[]>;
+    }
+  | {
+      type: "wireSeqTables";
+      tables: Record<WireSeqColor, WireSeqLetter[][]>;
+    };

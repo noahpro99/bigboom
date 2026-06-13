@@ -12,6 +12,10 @@ import {
   generateMorseModule,
   generatePasswordModule,
   generateComplicatedWiresModule,
+  generateWhosOnFirstModule,
+  getWhoSolution,
+  generateWireSeqModule,
+  wireSeqShouldCut,
   generateSerialNumber,
   getWireSolution,
   getButtonAction,
@@ -41,6 +45,8 @@ import type {
   MorseModuleConfig,
   PasswordModuleConfig,
   ComplicatedWiresModuleConfig,
+  WhosOnFirstModuleConfig,
+  WireSeqModuleConfig,
   Preset,
   GameConfig,
 } from "../lib/types";
@@ -78,6 +84,8 @@ const TYPE_SEED_SALT: Record<ModuleType, number> = {
   morse: 0x70_0001,
   password: 0x80_0001,
   compWires: 0x90_0001,
+  whoFirst: 0xa0_0001,
+  wireSeq: 0xb0_0001,
 };
 
 function instanceSeed(
@@ -104,7 +112,7 @@ function spawnModules(
   let pos = 0;
   const seenCount: Record<ModuleType, number> = {
     wire: 0, button: 0, symbols: 0, simon: 0,
-    maze: 0, memory: 0, morse: 0, password: 0, compWires: 0,
+    maze: 0, memory: 0, morse: 0, password: 0, compWires: 0, whoFirst: 0, wireSeq: 0,
   };
   /* Symbols share columns across all instances on the bomb (one manual
      page covers all). Only build the columns if there's at least one
@@ -148,6 +156,10 @@ function spawnModules(
       configJson = JSON.stringify(
         generateComplicatedWiresModule(seed, iseed)
       );
+    } else if (type === "whoFirst") {
+      configJson = JSON.stringify(generateWhosOnFirstModule(seed, iseed));
+    } else if (type === "wireSeq") {
+      configJson = JSON.stringify(generateWireSeqModule(seed, iseed));
     } else {
       continue;
     }
@@ -170,7 +182,7 @@ function normalizeConfig(input: Partial<GameConfig>): GameConfig {
   );
   const counts: Record<ModuleType, number> = {
     wire: 0, button: 0, symbols: 0, simon: 0,
-    maze: 0, memory: 0, morse: 0, password: 0, compWires: 0,
+    maze: 0, memory: 0, morse: 0, password: 0, compWires: 0, whoFirst: 0, wireSeq: 0,
   };
   for (const t of input.moduleTypes ?? []) {
     if (t in counts) counts[t]++;
@@ -188,6 +200,8 @@ function normalizeConfig(input: Partial<GameConfig>): GameConfig {
     "morse",
     "password",
     "compWires",
+    "whoFirst",
+    "wireSeq",
   ];
   const moduleTypes: ModuleType[] = [];
   for (const t of order) {
@@ -439,7 +453,7 @@ export const getGameState = createServerFn({ method: "GET" })
     const modules: Module[] = moduleRows.map((m) => ({
       id: m.id,
       gameId: m.game_id,
-      type: m.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password" | "compWires",
+      type: m.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password" | "compWires" | "whoFirst" | "wireSeq",
       position: m.position,
       config: JSON.parse(m.config_json),
       state: JSON.parse(m.state_json),
@@ -858,7 +872,7 @@ function loadModule(moduleId: string): Module | null {
   return {
     id: row.id,
     gameId: row.game_id,
-    type: row.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password" | "compWires",
+    type: row.type as "wire" | "button" | "symbols" | "simon" | "maze" | "memory" | "morse" | "password" | "compWires" | "whoFirst" | "wireSeq",
     position: row.position,
     config: JSON.parse(row.config_json),
     state: JSON.parse(row.state_json),
@@ -1101,6 +1115,101 @@ export const submitPassword = createServerFn({ method: "POST" })
       return { ok: true, correct: true, solved: true };
     }
     db.run("UPDATE modules SET struck = 1 WHERE id = ?", [data.moduleId]);
+    const { lost } = applyStrike(data.gameId);
+    return { ok: true, correct: false, lost };
+  });
+
+// Wire Sequences — defuser cuts a wire at a slot index. Each wire's
+// "should cut" rule is its colour's table entry for its 1-indexed
+// occurrence count (1st red wire / 2nd red wire / etc.) combined
+// with its printed letter. Cut is recorded either way (wire visibly
+// stays severed); wrong cut → strike. Module solves when every
+// wire that SHOULD have been cut is cut.
+export const cutWireSeq = createServerFn({ method: "POST" })
+  .validator(
+    (data: { gameId: string; moduleId: string; slotIndex: number }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+
+    const config = mod.config as WireSeqModuleConfig;
+    if (!config.wires[data.slotIndex]) return { ok: false };
+    const cut = mod.state.cutWireSeqs ?? [];
+    if (cut.includes(data.slotIndex)) return { ok: false };
+
+    const shouldCut = wireSeqShouldCut(config, data.slotIndex);
+    const nextCut = [...cut, data.slotIndex];
+
+    if (shouldCut) {
+      db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
+        JSON.stringify({ ...mod.state, cutWireSeqs: nextCut }),
+        data.moduleId,
+      ]);
+      /* Are all required cuts now made? */
+      const allDone = config.wires.every((_, i) => {
+        if (!wireSeqShouldCut(config, i)) return true;
+        return nextCut.includes(i);
+      });
+      if (allDone) {
+        db.run("UPDATE modules SET solved = 1 WHERE id = ?", [data.moduleId]);
+        checkAllSolved(data.gameId);
+        return { ok: true, correct: true, solved: true };
+      }
+      return { ok: true, correct: true };
+    }
+
+    db.run("UPDATE modules SET state_json = ?, struck = 1 WHERE id = ?", [
+      JSON.stringify({ ...mod.state, cutWireSeqs: nextCut }),
+      data.moduleId,
+    ]);
+    const { lost } = applyStrike(data.gameId);
+    return { ok: true, correct: false, lost };
+  });
+
+// Who's On First — defuser presses one of the six button words. The
+// correct word is the first word in the priority list for the
+// "key" (button at the display's lookup position) that appears on
+// any visible button. Wrong press → strike + stage resets to 0.
+// Right press → stage advances; module solves when all WHO_STAGES
+// done.
+export const pressWhoFirst = createServerFn({ method: "POST" })
+  .validator(
+    (data: { gameId: string; moduleId: string; word: string }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const mod = loadModule(data.moduleId);
+    if (!mod || mod.solved) return { ok: false };
+    const config = mod.config as WhosOnFirstModuleConfig;
+    const stageIdx = mod.state.whoStage ?? 0;
+    const expected = getWhoSolution(config, stageIdx);
+    if (data.word === expected) {
+      const nextStage = stageIdx + 1;
+      const solved = nextStage >= config.stages.length;
+      if (solved) {
+        db.run(
+          "UPDATE modules SET solved = 1, state_json = ? WHERE id = ?",
+          [
+            JSON.stringify({ ...mod.state, whoStage: nextStage }),
+            data.moduleId,
+          ]
+        );
+        checkAllSolved(data.gameId);
+        return { ok: true, correct: true, solved: true };
+      }
+      db.run("UPDATE modules SET state_json = ? WHERE id = ?", [
+        JSON.stringify({ ...mod.state, whoStage: nextStage }),
+        data.moduleId,
+      ]);
+      return { ok: true, correct: true };
+    }
+    /* Wrong — strike + reset to stage 0. */
+    db.run("UPDATE modules SET struck = 1, state_json = ? WHERE id = ?", [
+      JSON.stringify({ ...mod.state, whoStage: 0 }),
+      data.moduleId,
+    ]);
     const { lost } = applyStrike(data.gameId);
     return { ok: true, correct: false, lost };
   });

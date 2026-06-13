@@ -8,6 +8,8 @@ import { MemoryModule } from "./MemoryModule";
 import { MorseModule } from "./MorseModule";
 import { PasswordModule } from "./PasswordModule";
 import { ComplicatedWiresModule } from "./ComplicatedWiresModule";
+import { WhosOnFirstModule } from "./WhosOnFirstModule";
+import { WireSequencesModule } from "./WireSequencesModule";
 import { Timer } from "./Timer";
 import { ProfileButton } from "../ProfileButton";
 import { BatteryPanel } from "./BatteryPanel";
@@ -25,6 +27,8 @@ import {
   cyclePassword,
   submitPassword,
   cutCompWire,
+  pressWhoFirst,
+  cutWireSeq,
 } from "../../server/game";
 import { useDisplayTime } from "../../lib/useDisplayTime";
 import { play } from "../../lib/sound";
@@ -291,6 +295,37 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
+  /* WHO'S ON FIRST — optimistically advance the stage on press; the
+     server rolls back if the press was wrong (stage resets to 0,
+     server says correct=false → buzzer + refetch). */
+  const whoMut = useMutation({
+    mutationFn: pressWhoFirst,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({
+        ...s,
+        whoStage: (s.whoStage ?? 0) + 1,
+      }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
+    onSuccess: onActionResult,
+  });
+  /* WIRE SEQUENCES — same shape as Complicated Wires: optimistically
+     mark the slot cut so the wire fades immediately. */
+  const wireSeqCutMut = useMutation({
+    mutationFn: cutWireSeq,
+    onMutate: async (vars) => {
+      const ctx = await snapshotAndCancel();
+      patchModuleState(vars.data.moduleId, (s) => ({
+        ...s,
+        cutWireSeqs: [...(s.cutWireSeqs ?? []), vars.data.slotIndex],
+      }));
+      return ctx;
+    },
+    onError: (_e, _v, ctx) => rollback(ctx as Ctx),
+    onSuccess: onActionResult,
+  });
 
   /* Spectators see everything but can't interact — fold into the same
      `disabled` gate every module already checks. */
@@ -532,6 +567,34 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     disabled={disabled}
                     onCut={(slotIndex) =>
                       compCutMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id, slotIndex },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'whoFirst') {
+                return (
+                  <WhosOnFirstModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onPress={(word) =>
+                      whoMut.mutate({
+                        data: { gameId: game.id, moduleId: mod.id, word },
+                      })
+                    }
+                  />
+                );
+              }
+              if (mod.type === 'wireSeq') {
+                return (
+                  <WireSequencesModule
+                    key={mod.id}
+                    module={mod}
+                    disabled={disabled}
+                    onCut={(slotIndex) =>
+                      wireSeqCutMut.mutate({
                         data: { gameId: game.id, moduleId: mod.id, slotIndex },
                       })
                     }

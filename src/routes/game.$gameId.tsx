@@ -308,6 +308,8 @@ const MODULE_META: Record<ModuleType, { label: string; sub: string }> = {
   morse: { label: "Morse", sub: "MOD-T" },
   password: { label: "Password", sub: "MOD-P" },
   compWires: { label: "Comp-Wires", sub: "MOD-C" },
+  whoFirst: { label: "Who's 1st", sub: "MOD-W" },
+  wireSeq: { label: "Wire-Seq", sub: "MOD-Q" },
 };
 
 function ConfigSection({

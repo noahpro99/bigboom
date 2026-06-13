@@ -29,8 +29,19 @@ import type {
   ComplicatedWiresModuleConfig,
   CompWire,
   CompWireOutcome,
+  WhosOnFirstModuleConfig,
+  WhoStage,
+  WireSeqModuleConfig,
+  WireSeqColor,
+  WireSeqLetter,
+  WireSeqWire,
 } from "./types";
-import { compWireKey } from "./types";
+import {
+  compWireKey,
+  WHO_BUTTON_COUNT,
+  WHO_PRIORITY_LEN,
+  WHO_STAGES,
+} from "./types";
 import {
   MAZE_SIZE,
   MAZE_POOL,
@@ -811,6 +822,57 @@ export function generateManualPages(
     ],
   };
 
+  const wireSeqConfig = generateWireSeqModule(seed);
+  const wireSeqPage: ManualPage = {
+    moduleType: "wireSeq",
+    title: "WIRE SEQUENCES",
+    sections: [
+      {
+        heading: "Procedure",
+        content: [
+          {
+            type: "paragraph",
+            text:
+              "Each wire has a colour and one of three letters (A, B, or C) printed beside it. Count occurrences of each colour from the top: the first red wire is row 1 in the red table, the second red wire is row 2, and so on. Cut the wire only if its letter appears in that row's set.",
+          },
+        ],
+      },
+      {
+        heading: "Per-colour cut tables",
+        content: [{ type: "wireSeqTables", tables: wireSeqConfig.tables }],
+      },
+    ],
+  };
+
+  const whoConfig = generateWhosOnFirstModule(seed);
+  const whoPage: ManualPage = {
+    moduleType: "whoFirst",
+    title: "WHO'S ON FIRST",
+    sections: [
+      {
+        heading: "Procedure",
+        content: [
+          {
+            type: "paragraph",
+            text:
+              "Look up the word on the display in the position table — that tells you which of the six buttons to read. Read the word on that button, look it up in the priority list table, then press the first word from the list that appears on any of the six buttons. Three stages, one strike resets you to stage one.",
+          },
+        ],
+      },
+      {
+        heading: "Lookup tables",
+        content: [
+          {
+            type: "whoTables",
+            pool: whoConfig.pool,
+            displayPosTable: whoConfig.displayPosTable,
+            priorityTable: whoConfig.priorityTable,
+          },
+        ],
+      },
+    ],
+  };
+
   const compWiresConfig = generateComplicatedWiresModule(seed);
   const compWiresPage: ManualPage = {
     moduleType: "compWires",
@@ -846,6 +908,8 @@ export function generateManualPages(
     morse: morsePage,
     password: passwordPage,
     compWires: compWiresPage,
+    whoFirst: whoPage,
+    wireSeq: wireSeqPage,
   };
   /* If a moduleTypes list is supplied, only emit pages for types
      actually present (dedup'd — duplicates collapse to one page). When
@@ -1667,6 +1731,222 @@ export const COMP_OUTCOME_SHORT: Record<CompWireOutcome, string> = {
   B: "Batt",
   V: "Vowel",
 };
+
+// ---- Who's On First ----
+
+/* Pool of short, button-friendly words. KTaNE's canonical set is in
+   here but expanded with a few extras so per-bomb sampling has more
+   variety. Kept ALL-CAPS for visual consistency with the button face. */
+const WHO_WORDS = [
+  "YES", "FIRST", "DISPLAY", "OKAY", "SAYS", "NOTHING", "BLANK", "NO",
+  "LED", "LEAD", "READ", "RED", "REED", "LEED", "HOLD", "YOU", "ARE",
+  "YOUR", "URE", "THERE", "THEY", "THEIR", "SEE", "C", "CEE", "READY",
+  "WHAT", "UHHH", "LEFT", "RIGHT", "MIDDLE", "WAIT", "PRESS", "DONE",
+  "NEXT", "SURE", "LIKE", "UH", "MAYBE", "STOP", "GO", "OUT", "IN",
+  "UP", "DOWN", "OVER", "NEAR", "FAR", "ALSO", "QUITE",
+];
+
+const WHO_POOL_SIZE = 28;
+
+/* Build the per-bomb pool of WHO_POOL_SIZE words, then the two lookup
+   tables. Both tables are *shared* across instances on the bomb
+   (manual shows them once); per-instance variation comes via the
+   stages array picked by the instance seed. */
+export function generateWhosOnFirstModule(
+  baseSeed: number,
+  instanceSeed?: number
+): WhosOnFirstModuleConfig {
+  const baseRng = mulberry32(baseSeed + 0x57_4f46_31);
+  const pool = shuffleArray(baseRng, WHO_WORDS).slice(0, WHO_POOL_SIZE);
+
+  /* For every pool word, pick a button position 1-WHO_BUTTON_COUNT. */
+  const displayPosTable: Record<string, number> = {};
+  for (const w of pool) {
+    displayPosTable[w] = 1 + Math.floor(baseRng() * WHO_BUTTON_COUNT);
+  }
+
+  /* For every pool word, build a priority list — an ordered slice of
+     the pool (length WHO_PRIORITY_LEN, excluding the word itself so
+     a button never points at itself). */
+  const priorityTable: Record<string, string[]> = {};
+  for (const w of pool) {
+    const others = pool.filter((x) => x !== w);
+    priorityTable[w] = shuffleArray(baseRng, others).slice(0, WHO_PRIORITY_LEN);
+  }
+
+  /* Pre-generate three solvable stages. For each: pick a display word,
+     compute the position to read, place a "key" word at that position,
+     then fill the remaining 5 button slots making sure at least one of
+     them is in the key's priority list (so a unique first-match
+     solution exists). */
+  const iseed = instanceSeed ?? baseSeed;
+  const stageRng = mulberry32(iseed + 0x57_4f46_32);
+  const stages: WhoStage[] = [];
+  for (let s = 0; s < WHO_STAGES; s++) {
+    stages.push(buildWhoStage(stageRng, pool, displayPosTable, priorityTable));
+  }
+
+  return { pool, displayPosTable, priorityTable, stages };
+}
+
+function buildWhoStage(
+  rng: () => number,
+  pool: string[],
+  displayPosTable: Record<string, number>,
+  priorityTable: Record<string, string[]>
+): WhoStage {
+  /* Try until we land on a solvable stage. The constraint — at least
+     one priority-list word must appear on a non-key button — is
+     usually satisfied immediately, but we cap attempts so a degenerate
+     RNG can't infinite-loop us. */
+  for (let attempt = 0; attempt < 80; attempt++) {
+    const display = pick(rng, pool);
+    const keyPos = displayPosTable[display]; // 1..WHO_BUTTON_COUNT
+    const keyWord = pick(rng, pool);
+    const priority = priorityTable[keyWord];
+
+    /* Other 5 buttons — random pool words distinct from keyWord. We
+       require at least one of them to be in `priority`, and the FIRST
+       such word along priority order is the canonical solution. */
+    const rest = shuffleArray(rng, pool.filter((w) => w !== keyWord)).slice(
+      0,
+      WHO_BUTTON_COUNT - 1
+    );
+
+    /* Plug rest into the 5 non-key positions in their shuffled order. */
+    const buttons = new Array<string>(WHO_BUTTON_COUNT);
+    buttons[keyPos - 1] = keyWord;
+    let ri = 0;
+    for (let i = 0; i < WHO_BUTTON_COUNT; i++) {
+      if (i === keyPos - 1) continue;
+      buttons[i] = rest[ri++];
+    }
+
+    const hitsPriority = priority.some((p) => buttons.includes(p));
+    if (hitsPriority) {
+      return { display, buttons };
+    }
+  }
+
+  /* Fallback — force the first priority word onto a button. */
+  const display = pool[0];
+  const keyPos = displayPosTable[display];
+  const keyWord = pool[1] ?? pool[0];
+  const priority = priorityTable[keyWord];
+  const buttons = new Array<string>(WHO_BUTTON_COUNT);
+  buttons[keyPos - 1] = keyWord;
+  let r = 0;
+  const fallbackRest = pool
+    .filter((w) => w !== keyWord && w !== display)
+    .slice(0, WHO_BUTTON_COUNT - 1);
+  /* Ensure the first priority word is placed. */
+  const fallbackTarget = priority[0];
+  if (fallbackTarget && !fallbackRest.includes(fallbackTarget)) {
+    fallbackRest[0] = fallbackTarget;
+  }
+  for (let i = 0; i < WHO_BUTTON_COUNT; i++) {
+    if (i === keyPos - 1) continue;
+    buttons[i] = fallbackRest[r++] ?? pool[0];
+  }
+  return { display, buttons };
+}
+
+/* Given the current stage on the bomb, what's the correct word to
+   press? Walks the same procedure the expert reads from the manual. */
+export function getWhoSolution(
+  config: WhosOnFirstModuleConfig,
+  stageIdx: number
+): string | null {
+  const stage = config.stages[stageIdx];
+  if (!stage) return null;
+  const pos = config.displayPosTable[stage.display];
+  if (!pos) return null;
+  const keyWord = stage.buttons[pos - 1];
+  if (!keyWord) return null;
+  const priority = config.priorityTable[keyWord] ?? [];
+  for (const p of priority) {
+    if (stage.buttons.includes(p)) return p;
+  }
+  /* No priority word found on the buttons — fall back to the key word
+     itself (always at least valid). */
+  return keyWord;
+}
+
+// ---- Wire Sequences ----
+
+const WIRE_SEQ_COLORS: WireSeqColor[] = ["red", "blue", "black"];
+const WIRE_SEQ_LETTERS: WireSeqLetter[] = ["A", "B", "C"];
+/* 9 rows per colour — KTaNE convention is "1st through 9th red wire",
+   though in practice you rarely have all 9 of a colour. */
+const WIRE_SEQ_TABLE_ROWS = 9;
+
+export function generateWireSeqModule(
+  baseSeed: number,
+  instanceSeed?: number
+): WireSeqModuleConfig {
+  /* Rule tables come from the BASE seed (the manual shows them once
+     and they have to match every instance on the bomb). The wire
+     sequence is per-instance. */
+  const tableRng = mulberry32(baseSeed + 0x57_5345_51);
+  const tables: Record<WireSeqColor, WireSeqLetter[][]> = {
+    red: makeWireSeqTable(tableRng),
+    blue: makeWireSeqTable(tableRng),
+    black: makeWireSeqTable(tableRng),
+  };
+
+  const iseed = instanceSeed ?? baseSeed;
+  const wireRng = mulberry32(iseed + 0x57_5345_57);
+  /* 8-12 wires per module. Bias the colour distribution so no single
+     colour dominates: pick weights then sample. */
+  const count = 8 + Math.floor(wireRng() * 5); // 8..12
+  const wires: WireSeqWire[] = Array.from({ length: count }, () => ({
+    color: pick(wireRng, WIRE_SEQ_COLORS),
+    letter: pick(wireRng, WIRE_SEQ_LETTERS),
+  }));
+  return { wires, tables };
+}
+
+function makeWireSeqTable(rng: () => number): WireSeqLetter[][] {
+  return Array.from({ length: WIRE_SEQ_TABLE_ROWS }, () => {
+    /* Each row is a random subset of {A, B, C} — biased toward
+       cardinality 1-2 so a meaningful number of wires don't get cut. */
+    const out: WireSeqLetter[] = [];
+    for (const L of WIRE_SEQ_LETTERS) {
+      if (rng() < 0.45) out.push(L);
+    }
+    return out;
+  });
+}
+
+/* For a given wire's slot index in the sequence, what's the 1-indexed
+   occurrence of its colour (the Nth red wire, etc.)? */
+export function wireSeqOccurrence(
+  wires: WireSeqWire[],
+  slotIndex: number
+): number {
+  const target = wires[slotIndex]?.color;
+  if (!target) return 0;
+  let n = 0;
+  for (let i = 0; i <= slotIndex; i++) {
+    if (wires[i].color === target) n++;
+  }
+  return n;
+}
+
+/* Should the wire at this slot be cut according to its colour's table
+   and the wire's letter? Returns false for out-of-range occurrences
+   (i.e., never cut a 10th red wire — the manual stops at 9). */
+export function wireSeqShouldCut(
+  config: WireSeqModuleConfig,
+  slotIndex: number
+): boolean {
+  const wire = config.wires[slotIndex];
+  if (!wire) return false;
+  const n = wireSeqOccurrence(config.wires, slotIndex);
+  const row = config.tables[wire.color][n - 1];
+  if (!row) return false;
+  return row.includes(wire.letter);
+}
 
 export function getSymbolsSolution(config: SymbolsModuleConfig): string[] {
   const activeIds = new Set(config.activeSymbols.map((s) => s.id));
