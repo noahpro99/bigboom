@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   generateManualPages,
   memoryRuleText,
@@ -31,13 +31,20 @@ interface ManualViewProps {
   moduleTypes?: ModuleType[];
 }
 
-// Phase machine: idle → exit (current page slides out) → enter (next page
-// slides in) → idle. The two `side` fields are independent so we can fly the
-// outgoing page off one side and bring the new page in from the other.
+/* Phase machine driving the page flip. Transitions are managed via
+   inline transforms (useLayoutEffect on phase change) instead of CSS
+   keyframes so we can pick up from arbitrary positions — specifically
+   from wherever the user's finger left the page when they released
+   past the commit threshold. */
 type Phase =
   | { kind: "idle" }
-  | { kind: "exit"; side: "left" | "right"; targetIdx: number }
-  | { kind: "enter"; side: "left" | "right" };
+  | { kind: "dragging" }
+  | { kind: "exiting"; targetIdx: number; direction: 1 | -1 }
+  | { kind: "entering"; from: 1 | -1 };
+
+const EXIT_MS = 320;
+const ENTER_MS = 380;
+const SNAP_MS = 260;
 
 export function ManualView({ seed, moduleTypes }: ManualViewProps) {
   const pages = generateManualPages(seed, moduleTypes);
@@ -47,41 +54,35 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
   const page = pages[selectedIdx];
   const atFirst = selectedIdx === 0;
   const atLast = selectedIdx === pages.length - 1;
-  const animating = phase.kind !== "idle";
+  const animating = phase.kind !== "idle" && phase.kind !== "dragging";
 
-  // Refs so click handlers always see the freshest values (react re-renders
-  // are async; without these, a double-click can fire two flipTo's before the
-  // first re-render commits, both reading `animating === false`).
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
   const selectedIdxRef = useRef(selectedIdx);
   selectedIdxRef.current = selectedIdx;
 
-  /* Pending-flip queue. queueFlipBy() just adds a signed count to the
-     net direction the reader wants to go; if the animation is already
-     mid-flip we don't drop the input. After each animation lands back
-     in idle, processNextFlip() pops one off the queue and animates the
-     next page. Net result: rapid double-swipe travels two pages, plays
-     two sounds, takes two animation lengths — but no input is lost. */
+  /* The active page element — every transform sequence (drag, exit,
+     enter, snap-back) lives on its style.transform. Re-mounts on
+     selectedIdx change because of the key prop below. */
+  const mainRef = useRef<HTMLElement | null>(null);
+
+  /* Pending-flip queue. queueFlipBy adds to the net direction; if idle
+     we process immediately, otherwise we drain after each animation
+     finishes. Rapid double-swipe travels two pages, no input lost. */
   const pendingDeltaRef = useRef(0);
 
   function processNextFlip() {
     if (pendingDeltaRef.current === 0) return;
-    const dir = Math.sign(pendingDeltaRef.current);
+    if (phaseRef.current.kind !== "idle") return;
+    const dir = Math.sign(pendingDeltaRef.current) as 1 | -1;
     const target = selectedIdxRef.current + dir;
     if (target < 0 || target >= pages.length) {
-      /* Hit the edge of the book — collapse the queue so further
-         swipes in the same direction don't pile up. */
       pendingDeltaRef.current = 0;
       return;
     }
     pendingDeltaRef.current -= dir;
     play("pageTurn");
-    setPhase({
-      kind: "exit",
-      side: dir > 0 ? "left" : "right",
-      targetIdx: target,
-    });
+    setPhase({ kind: "exiting", targetIdx: target, direction: dir });
   }
 
   function queueFlipBy(direction: -1 | 1) {
@@ -89,22 +90,61 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
     if (phaseRef.current.kind === "idle") processNextFlip();
   }
 
-  function handleAnimationEnd() {
-    if (phase.kind === "exit") {
-      setSelectedIdx(phase.targetIdx);
-      // After current goes off (say) left, new comes in from the right.
-      setPhase({
-        kind: "enter",
-        side: phase.side === "left" ? "right" : "left",
-      });
-    } else if (phase.kind === "enter") {
+  /* Drive the actual transform whenever the phase changes. */
+  useLayoutEffect(() => {
+    const m = mainRef.current;
+    if (!m) return;
+    if (phase.kind === "idle") {
+      /* Reset cleanly. If we just returned from a snap-back the prior
+         frame already set this; harmless to repeat. */
+      m.style.transition = "";
+      m.style.transform = "";
+      m.style.opacity = "";
+    } else if (phase.kind === "dragging") {
+      /* Drag transform is set imperatively by handlePointerMove —
+         we only ensure no transition is in flight here. */
+      m.style.transition = "none";
+    } else if (phase.kind === "exiting") {
+      const width = m.offsetWidth || 1;
+      const targetX = phase.direction > 0 ? -width * 0.42 : width * 0.42;
+      const tilt = phase.direction > 0 ? -1.4 : 1.4;
+      m.style.transition = `transform ${EXIT_MS}ms cubic-bezier(0.4, 0, 0.8, 0.2), opacity ${EXIT_MS}ms`;
+      m.style.transform = `translateX(${targetX}px) translateY(-6px) rotate(${tilt}deg)`;
+      m.style.opacity = "0";
+    } else if (phase.kind === "entering") {
+      const width = m.offsetWidth || 1;
+      const startX = phase.from > 0 ? width * 0.42 : -width * 0.42;
+      const startTilt = phase.from > 0 ? 1.2 : -1.2;
+      /* Snap to start position with no transition, force reflow, then
+         transition home. */
+      m.style.transition = "none";
+      m.style.transform = `translateX(${startX}px) translateY(-4px) rotate(${startTilt}deg)`;
+      m.style.opacity = "0";
+      void m.offsetHeight;
+      m.style.transition = `transform ${ENTER_MS}ms cubic-bezier(0.16, 1, 0.3, 1), opacity ${ENTER_MS}ms`;
+      m.style.transform = "";
+      m.style.opacity = "1";
+    }
+  }, [phase, selectedIdx]);
+
+  /* transitionend on the active element is how we step the phase
+     machine — propertyName=="transform" gates against the opacity
+     transition firing the same handler twice. */
+  function handleTransitionEnd(e: React.TransitionEvent<HTMLElement>) {
+    if (e.propertyName !== "transform") return;
+    if (e.target !== e.currentTarget) return;
+    if (phase.kind === "exiting") {
+      const dir = phase.direction;
+      const target = phase.targetIdx;
+      selectedIdxRef.current = target;
+      setSelectedIdx(target);
+      setPhase({ kind: "entering", from: dir });
+    } else if (phase.kind === "entering") {
       setPhase({ kind: "idle" });
     }
   }
 
-  /* Whenever we land in idle, drain one queued flip. Driven by the
-     phase state change so it runs after React has committed the
-     reset. */
+  /* Drain the queue whenever we settle into idle. */
   useEffect(() => {
     if (phase.kind === "idle") processNextFlip();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,20 +161,13 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const animClass =
-    phase.kind === "exit" && phase.side === "left"
-      ? "animate-page-exit-left"
-      : phase.kind === "exit" && phase.side === "right"
-      ? "animate-page-exit-right"
-      : phase.kind === "enter" && phase.side === "left"
-      ? "animate-page-enter-from-left"
-      : phase.kind === "enter" && phase.side === "right"
-      ? "animate-page-enter-from-right"
-      : "";
-
-  // Unified swipe (touch + mouse + pen) via pointer events. We only "take
-  // over" the gesture once horizontal movement clearly dominates, otherwise
-  // we let vertical scroll and text selection proceed normally.
+  /* Pointer-driven swipe with live finger-tracking and threshold-commit.
+     pointerRef tracks the drag origin; once horizontal motion takes
+     over, we set phase to "dragging" and update the active page's
+     transform on every move to follow the cursor. On release: past
+     SWIPE_THRESHOLD → commit to exiting (which transitions the rest of
+     the way from the current position); under threshold → snap back
+     to centre. */
   const pointerRef = useRef<{
     x: number;
     y: number;
@@ -143,19 +176,29 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
   } | null>(null);
   const SWIPE_THRESHOLD = 55;
   const TAKEOVER_THRESHOLD = 10;
+  /* Resistance when pulling against the edge of the book (no more
+     pages in that direction) — the page still moves, but only a
+     fraction of the cursor distance, like a rubber-band scroll. */
+  const EDGE_RESISTANCE = 0.3;
+
+  function applyDragTransform(rawDx: number) {
+    const m = mainRef.current;
+    if (!m) return;
+    const cur = selectedIdxRef.current;
+    let dx = rawDx;
+    if ((dx > 0 && cur === 0) || (dx < 0 && cur === pages.length - 1)) {
+      dx = dx * EDGE_RESISTANCE;
+    }
+    /* Tiny rotation proportional to drag distance — gives the page a
+       hint of physicality without going overboard. */
+    const rot = dx * 0.006;
+    m.style.transition = "none";
+    m.style.transform = `translateX(${dx}px) rotate(${rot}deg)`;
+    m.style.opacity = "";
+  }
 
   function handlePointerDown(e: React.PointerEvent) {
-    // Only left mouse button counts; touch and pen always do.
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    /* Ignore pointerdowns that land on an interactive control. The
-       Settings modal portals to document.body but React still bubbles
-       its synthetic events back through the component tree (the
-       ProfileButton trigger lives inside the manual header) — so a
-       drag on a settings slider would otherwise be hijacked here.
-       Buttons inside the manual itself (prev/next/profile) also pass
-       through this filter, since their onClick handlers don't depend
-       on the swipe tracker. `data-no-swipe` is an escape hatch any
-       sub-tree can use without depending on element type. */
     const target = e.target as HTMLElement | null;
     if (
       target &&
@@ -165,6 +208,9 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
     ) {
       return;
     }
+    /* Don't start a drag mid-animation — let the in-flight transition
+       finish first. The queue handles overflow swipes. */
+    if (phaseRef.current.kind !== "idle") return;
     pointerRef.current = {
       x: e.clientX,
       y: e.clientY,
@@ -189,10 +235,15 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
       } catch {
         /* capture not supported — fall back to plain delta tracking */
       }
-      // Clear any text selection that may have started on the way down.
       if (typeof window !== "undefined") {
         window.getSelection()?.removeAllRanges();
       }
+      /* Switch into dragging phase — useLayoutEffect clears any
+         transition so the next applyDragTransform is instant. */
+      setPhase({ kind: "dragging" });
+    }
+    if (s.captured && phaseRef.current.kind === "dragging") {
+      applyDragTransform(dx);
     }
   }
 
@@ -201,9 +252,32 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
     if (!s || s.pointerId !== e.pointerId) return;
     pointerRef.current = null;
     if (!s.captured) return;
+    const m = mainRef.current;
+    if (!m) return;
     const dx = e.clientX - s.x;
-    if (Math.abs(dx) < SWIPE_THRESHOLD) return;
-    queueFlipBy(dx < 0 ? 1 : -1);
+
+    if (phaseRef.current.kind !== "dragging") return;
+
+    if (Math.abs(dx) >= SWIPE_THRESHOLD) {
+      const direction = (dx < 0 ? 1 : -1) as 1 | -1;
+      const target = selectedIdxRef.current + direction;
+      if (target < 0 || target >= pages.length) {
+        /* Past threshold but no page to go to — snap back. */
+        m.style.transition = `transform ${SNAP_MS}ms cubic-bezier(0.16, 1, 0.3, 1), opacity ${SNAP_MS}ms`;
+        m.style.transform = "";
+        m.style.opacity = "";
+        setPhase({ kind: "idle" });
+        return;
+      }
+      play("pageTurn");
+      setPhase({ kind: "exiting", targetIdx: target, direction });
+    } else {
+      /* Below threshold — snap back to centre with a soft easing. */
+      m.style.transition = `transform ${SNAP_MS}ms cubic-bezier(0.16, 1, 0.3, 1), opacity ${SNAP_MS}ms`;
+      m.style.transform = "";
+      m.style.opacity = "";
+      setPhase({ kind: "idle" });
+    }
   }
 
   return (
@@ -233,10 +307,10 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
       >
         <main
           key={selectedIdx}
-          onAnimationEnd={handleAnimationEnd}
-          className={`${
-            page.kind === "cover" ? "h-full" : "min-h-full"
-          } ${animClass}`}
+          ref={mainRef}
+          onTransitionEnd={handleTransitionEnd}
+          className={page.kind === "cover" ? "h-full" : "min-h-full"}
+          style={{ willChange: "transform, opacity" }}
         >
           {page.kind === "cover" ? (
             /* The cover is its own beast: no running header, no nav,
