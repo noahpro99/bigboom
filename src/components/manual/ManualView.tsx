@@ -938,19 +938,21 @@ function WhoTablesBlock({
 }
 
 /* Complicated Wires Venn diagram. Four overlapping ellipses — one per
-   wire flag (Red, Blue, Star, LED) — drawn in slightly varied
-   positions/rotations per bomb. Each of the 16 sub-regions carries
-   the per-bomb outcome shorthand (Cut / No / Odd / Batt / Vowel) at
-   the centroid of its sampled cells.
+   wire flag (Red, Blue, Star, LED) — drawn in widely varied positions
+   per bomb. Each region's outcome shorthand is placed at the region's
+   *pole of inaccessibility* (the deepest interior point) rather than
+   its centroid, so labels never fall on a region's narrow waist. Font
+   sizes scale with the inscribed radius; regions too small for even
+   the smallest font drop the label entirely.
 
-   The visual is fully procedural: a hash of the table seeds the
-   ellipse geometry (overall rotation, eccentricity, per-ellipse
-   offset) and assigns each flag a distinct line style (solid,
-   dashed, dotted, dash-dot). No two bombs render the same diagram. */
+   Per-bomb generation tries multiple candidate layouts and keeps the
+   one whose smallest non-empty region has the most space — different
+   bombs get genuinely different geometries (rotation, ellipse
+   eccentricities, ring radius, stroke styles, stroke widths). */
 function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
   /* Visual seed — folds the outcome table into a 32-bit hash so
      bombs with identical tables stay identical (and most pairs
-     differ). Cheap djb2 walk. */
+     differ). djb2 walk. */
   const visualSeed = (() => {
     let h = 5381 >>> 0;
     for (let i = 0; i < table.length; i++) {
@@ -960,41 +962,20 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
   })();
   const rng = miniRng(visualSeed);
 
-  /* W and H define the SVG viewBox (centred at origin). We give the
-     diagram more vertical room than horizontal because the labels for
-     the corner ellipses ride above/below their lobes. */
-  const W = 320;
-  const H = 260;
+  const W = 360;
+  const H = 300;
 
-  /* Four ellipses arranged around a small jittered ring. The base
-     angles are 45°, 135°, 225°, 315° so the lobes meet roughly at
-     the centre. Per-bomb rotation rotates the whole arrangement;
-     per-ellipse jitter nudges each one. */
-  const baseRotation = rng() * Math.PI * 2;
-  const ellipses = [0, 1, 2, 3].map((i) => {
-    const baseAngle = Math.PI / 4 + (i * Math.PI) / 2;
-    const angle = baseAngle + baseRotation + (rng() - 0.5) * 0.18;
-    const offset = 38 + rng() * 14; // 38..52
-    const a = 78 + rng() * 14; // 78..92 semi-major
-    const b = 46 + rng() * 8; // 46..54 semi-minor
-    const cx = Math.cos(angle) * offset;
-    const cy = Math.sin(angle) * offset;
-    return { cx, cy, a, b, rot: angle + Math.PI / 2 };
-  });
-
-  /* Line styles cycled across the four flags from a per-bomb start
-     index — keeps each flag's outline immediately recognizable
-     within one diagram but shuffled between bombs. Plus per-flag
-     colour from the ink palette so each shape carries the wire-flag
-     identity. */
+  /* Each flag gets a colour + one of four line styles. We pick a
+     random rotation through the styles per bomb. */
   const STYLES = ["solid", "dashed", "dotted", "dashdot"] as const;
-  const dashFor: Record<typeof STYLES[number], string> = {
+  const DASH_FOR: Record<typeof STYLES[number], string> = {
     solid: "0",
-    dashed: "9 5",
-    dotted: "1.5 4",
-    dashdot: "8 4 1.5 4",
+    dashed: "10 5",
+    dotted: "2 4",
+    dashdot: "8 4 2 4",
   };
   const styleStart = Math.floor(rng() * 4);
+  const strokeWidth = 1.2 + rng() * 0.8; // 1.2..2.0
   const flagMeta = [
     { name: "Red", color: "#a8201a" },
     { name: "Blue", color: "#1d3f8e" },
@@ -1005,16 +986,48 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
     style: STYLES[(styleStart + i) % STYLES.length],
   }));
 
-  /* Region centroids — sample a grid, classify each point by which
-     ellipses contain it, then take the centroid of points in each
-     combination. */
-  const centroids = computeRegionCentroids(ellipses, W, H);
+  /* Generate candidate layouts and keep the one with the best worst
+     region. Each candidate widely varies:
+       - overall rotation (full 360°)
+       - per-ellipse base angle spread (compressed vs expanded
+         around the 90° spacing)
+       - ring radius (how spread out the lobes are)
+       - per-ellipse eccentricity (tall vs round)
+       - per-ellipse individual jitter
+     The deeper the smallest region's inscribed radius, the more
+     legible the labels will be. */
+  let best: {
+    ellipses: Ellipse[];
+    poles: Array<{ x: number; y: number; r: number } | null>;
+    worst: number;
+  } | null = null;
+  const ATTEMPTS = 18;
+  for (let n = 0; n < ATTEMPTS; n++) {
+    const ellipses = rollEllipses(rng);
+    const poles = computeRegionPoles(ellipses, W, H);
+    /* Worst is the smallest inscribed radius among NON-EMPTY regions.
+       We treat key 0 (outside all four — usually a big rectangle of
+       empty space) as a special case to avoid distorting the score. */
+    let worst = Infinity;
+    for (let k = 1; k < 16; k++) {
+      const p = poles[k];
+      if (p && p.r < worst) worst = p.r;
+    }
+    if (!best || worst > best.worst) {
+      best = { ellipses, poles, worst };
+    }
+    /* Stop early once we hit a comfortable score. */
+    if (best.worst >= 14) break;
+  }
+  const ellipses = best!.ellipses;
+  const poles = best!.poles;
 
-  /* Outer labels — anchored just past the outer edge of each ellipse,
-     in the direction away from origin. */
+  /* Outer flag titles — placed just outside each ellipse on the far
+     side of the diagram from the origin, with a soft halo so the
+     ellipse line doesn't slice through the lettering. */
   const outerLabels = ellipses.map((e, i) => {
-    const dir = Math.atan2(e.cy, e.cx) || rng();
-    const r = Math.hypot(e.cx, e.cy) + e.a * 0.95;
+    const dir = Math.atan2(e.cy, e.cx);
+    const r = Math.hypot(e.cx, e.cy) + e.a * 0.95 + 6;
     return {
       x: Math.cos(dir) * r,
       y: Math.sin(dir) * r,
@@ -1026,10 +1039,10 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
     <div className="mb-5">
       <svg
         viewBox={`${-W / 2} ${-H / 2} ${W} ${H}`}
-        className="w-full max-w-[520px] mx-auto h-auto block"
+        className="w-full max-w-[560px] mx-auto h-auto block"
         style={{ color: "var(--color-ink)" }}
       >
-        {/* Outer flag labels */}
+        {/* Outer flag titles */}
         {outerLabels.map((l, i) => (
           <text
             key={i}
@@ -1039,15 +1052,19 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
             dominantBaseline="middle"
             fill={l.color}
             fontFamily="var(--font-stencil, sans-serif)"
-            fontSize="14"
+            fontSize="15"
             fontWeight="700"
             style={{ letterSpacing: "0.15em" }}
+            paintOrder="stroke"
+            stroke="var(--color-paper)"
+            strokeWidth="4"
+            strokeLinejoin="round"
           >
             {l.name}
           </text>
         ))}
 
-        {/* The four ellipses themselves */}
+        {/* The four ellipses */}
         {ellipses.map((e, i) => (
           <ellipse
             key={i}
@@ -1058,32 +1075,42 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
             transform={`rotate(${(e.rot * 180) / Math.PI} ${e.cx} ${e.cy})`}
             fill="none"
             stroke={flagMeta[i].color}
-            strokeWidth="1.4"
-            strokeDasharray={dashFor[flagMeta[i].style]}
-            opacity="0.85"
+            strokeWidth={strokeWidth}
+            strokeDasharray={DASH_FOR[flagMeta[i].style]}
+            strokeLinecap="round"
+            opacity="0.88"
           />
         ))}
 
-        {/* Outcome label for each of the 16 regions. The empty
-            combination (key=0, outside all four ellipses) prints
-            near the bottom corner where it has natural space. */}
-        {centroids.map((c, key) => {
-          if (!c) return null;
-          const outcome = table[key];
+        {/* One label per non-empty region, scaled to the local pole
+            radius. Below the minimum-readable threshold we drop the
+            label entirely — better than overflowing the region. */}
+        {poles.map((p, key) => {
+          if (!p) return null;
+          const text = COMP_OUTCOME_SHORT[table[key]];
+          /* Each character is roughly fontSize * 0.6 wide. Solve
+             for a font size that lets the whole label fit inside a
+             circle of radius p.r centred at the pole. We bound the
+             size to a readable range and drop the label if even the
+             smallest size won't fit. */
+          const charW = text.length * 0.62;
+          const fitForRadius = Math.min(p.r * 1.7, (p.r * 2) / charW);
+          const fontSize = Math.max(7.2, Math.min(13, fitForRadius));
+          if (fontSize < 7.2) return null;
           return (
             <text
               key={key}
-              x={c.x}
-              y={c.y}
+              x={p.x}
+              y={p.y}
               textAnchor="middle"
               dominantBaseline="middle"
               fill="var(--color-ink)"
               fontFamily="var(--font-mono, monospace)"
-              fontSize={key === 0 ? "9" : "10"}
+              fontSize={fontSize.toFixed(1)}
               fontWeight="700"
-              style={{ letterSpacing: "0.05em" }}
+              style={{ letterSpacing: "0.04em" }}
             >
-              {COMP_OUTCOME_SHORT[outcome]}
+              {text}
             </text>
           );
         })}
@@ -1104,8 +1131,33 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
   );
 }
 
-/* Tiny inline mulberry32 — we don't want to drag a generator helper
-   into the manual just for visual jitter. */
+/* Pick one candidate ellipse layout with wide per-bomb variation. */
+function rollEllipses(rng: () => number): Ellipse[] {
+  const baseRotation = rng() * Math.PI * 2;
+  /* Spread factor — how compressed/expanded the four base angles
+     are. 1.0 = perfectly even (90° apart), > 1 pulls neighbours
+     apart, < 1 cluster them. */
+  const spread = 0.78 + rng() * 0.6;
+  const ringR = 40 + rng() * 22; // 40..62 — how far from origin
+  /* Per-ellipse jitter range — bigger means weirder asymmetric
+     layouts. */
+  const jitter = 0.08 + rng() * 0.22;
+  return [0, 1, 2, 3].map((i) => {
+    const baseAngle = (i * Math.PI) / 2 * spread + ((Math.PI / 2) * (1 - spread)) * i;
+    const angle = baseAngle + baseRotation + (rng() - 0.5) * jitter;
+    const r = ringR + (rng() - 0.5) * 14;
+    const a = 78 + rng() * 22; // 78..100 semi-major
+    const b = 42 + rng() * 18; // 42..60 semi-minor
+    const cx = Math.cos(angle) * r;
+    const cy = Math.sin(angle) * r;
+    /* The ellipse's own rotation — tangent to the ring plus a small
+       extra twist. */
+    const rot = angle + Math.PI / 2 + (rng() - 0.5) * 0.4;
+    return { cx, cy, a, b, rot };
+  });
+}
+
+/* Tiny inline mulberry32. */
 function miniRng(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
@@ -1124,48 +1176,60 @@ interface Ellipse {
   rot: number;
 }
 
-/* For each of the 16 (R/B/S/L) combinations, find the centroid of
-   sample points that fall in exactly that combination of ellipses.
-   Returns null for any combination that produces no samples (i.e.,
-   that region happens to be empty for this random ellipse layout —
-   rare but possible). */
-function computeRegionCentroids(
+/* For each of the 16 (R/B/S/L) combinations, find the pole of
+   inaccessibility — the sample point with the greatest minimum
+   distance to any ellipse boundary. That's the deepest interior
+   point of the region, the natural spot for a label. We also return
+   the inscribed radius `r` so callers can size labels to fit. */
+function computeRegionPoles(
   ellipses: Ellipse[],
   W: number,
   H: number
-): Array<{ x: number; y: number } | null> {
-  const sums = Array.from({ length: 16 }, () => ({ x: 0, y: 0, n: 0 }));
-  /* 1px-ish sampling on the viewBox — plenty for stable centroids
-     without being slow. */
+): Array<{ x: number; y: number; r: number } | null> {
+  /* Best (max) margin per region key, plus its position. We sample on
+     a 4px grid which is plenty for stable poles without blowing up
+     compute. */
   const STEP = 4;
+  const best: Array<{ x: number; y: number; r: number } | null> = Array.from(
+    { length: 16 },
+    () => null
+  );
   for (let y = -H / 2; y <= H / 2; y += STEP) {
     for (let x = -W / 2; x <= W / 2; x += STEP) {
       let key = 0;
+      let minMargin = Infinity;
       for (let i = 0; i < ellipses.length; i++) {
-        if (pointInEllipse(x, y, ellipses[i])) {
-          key |= 1 << (3 - i); // i=0 → bit 3 (red), … i=3 → bit 0 (LED)
-        }
+        const m = ellipseSignedMargin(x, y, ellipses[i]);
+        const inside = m >= 0;
+        if (inside) key |= 1 << (3 - i);
+        /* Distance to the nearest boundary (in pixel-ish units) is
+           |margin| — whether we're inside or outside doesn't matter
+           for "how far to the boundary." */
+        const dist = Math.abs(m);
+        if (dist < minMargin) minMargin = dist;
       }
-      sums[key].x += x;
-      sums[key].y += y;
-      sums[key].n++;
+      const cur = best[key];
+      if (!cur || minMargin > cur.r) {
+        best[key] = { x, y, r: minMargin };
+      }
     }
   }
-  return sums.map((s) => (s.n === 0 ? null : { x: s.x / s.n, y: s.y / s.n }));
+  return best;
 }
 
-function pointInEllipse(
-  x: number,
-  y: number,
-  e: { cx: number; cy: number; a: number; b: number; rot: number }
-): boolean {
+/* Signed approximate margin from a point to an ellipse boundary:
+   positive when inside, negative when outside. Uses the difference
+   between the normalised distance and 1, scaled by min(a, b) so the
+   result is in roughly pixel units (good enough for label sizing). */
+function ellipseSignedMargin(x: number, y: number, e: Ellipse): number {
   const dx = x - e.cx;
   const dy = y - e.cy;
   const cos = Math.cos(-e.rot);
   const sin = Math.sin(-e.rot);
   const rx = dx * cos - dy * sin;
   const ry = dx * sin + dy * cos;
-  return (rx / e.a) ** 2 + (ry / e.b) ** 2 <= 1;
+  const norm = Math.sqrt((rx / e.a) ** 2 + (ry / e.b) ** 2);
+  return (1 - norm) * Math.min(e.a, e.b);
 }
 
 function PasswordDictBlock({ words }: { words: string[] }) {
