@@ -66,28 +66,36 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
      selectedIdx change because of the key prop below. */
   const mainRef = useRef<HTMLElement | null>(null);
 
-  /* Pending-flip queue. queueFlipBy adds to the net direction; if idle
-     we process immediately, otherwise we drain after each animation
-     finishes. Rapid double-swipe travels two pages, no input lost. */
-  const pendingDeltaRef = useRef(0);
+  /* pendingTargetRef = "where the user has told us to end up", as an
+     absolute page index. Each swipe just updates this; the animation
+     state machine catches up. While an exit is in flight, additional
+     swipes change the target but don't trigger new animations — when
+     the in-flight exit lands, we jump selectedIdx straight to the
+     LATEST target, skipping past intermediates. Net result: ten quick
+     swipes land you ten pages ahead with one visible animation, not
+     ten chained ones. */
+  const pendingTargetRef = useRef(selectedIdx);
 
-  function processNextFlip() {
-    if (pendingDeltaRef.current === 0) return;
-    if (phaseRef.current.kind !== "idle") return;
-    const dir = Math.sign(pendingDeltaRef.current) as 1 | -1;
-    const target = selectedIdxRef.current + dir;
-    if (target < 0 || target >= pages.length) {
-      pendingDeltaRef.current = 0;
-      return;
-    }
-    pendingDeltaRef.current -= dir;
+  function clampedTarget(idx: number): number {
+    return Math.max(0, Math.min(pages.length - 1, idx));
+  }
+
+  function startExitToward(target: number) {
+    if (target === selectedIdxRef.current) return;
+    const direction = (target > selectedIdxRef.current ? 1 : -1) as 1 | -1;
     play("pageTurn");
-    setPhase({ kind: "exiting", targetIdx: target, direction: dir });
+    setPhase({ kind: "exiting", targetIdx: target, direction });
   }
 
   function queueFlipBy(direction: -1 | 1) {
-    pendingDeltaRef.current += direction;
-    if (phaseRef.current.kind === "idle") processNextFlip();
+    const next = clampedTarget(pendingTargetRef.current + direction);
+    if (next === pendingTargetRef.current) return; // hit edge
+    pendingTargetRef.current = next;
+    /* If we're idle, kick off animation now. If exiting/entering, the
+       running cycle will land at pendingTargetRef when it ends. */
+    if (phaseRef.current.kind === "idle") {
+      startExitToward(pendingTargetRef.current);
+    }
   }
 
   /* Drive the actual transform whenever the phase changes. */
@@ -135,20 +143,24 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
     if (e.target !== e.currentTarget) return;
     if (phase.kind === "exiting") {
       const dir = phase.direction;
-      const target = phase.targetIdx;
+      /* Jump to the LATEST target, not the target captured when the
+         exit was kicked off — extra swipes during the exit may have
+         advanced it. The user's intent is always to end up at the
+         current pendingTargetRef. */
+      const target = pendingTargetRef.current;
       selectedIdxRef.current = target;
       setSelectedIdx(target);
       setPhase({ kind: "entering", from: dir });
     } else if (phase.kind === "entering") {
-      setPhase({ kind: "idle" });
+      /* If swipes arrived during the enter animation, pendingTargetRef
+         is ahead of selectedIdx — start one more cycle to catch up. */
+      if (pendingTargetRef.current !== selectedIdxRef.current) {
+        startExitToward(pendingTargetRef.current);
+      } else {
+        setPhase({ kind: "idle" });
+      }
     }
   }
-
-  /* Drain the queue whenever we settle into idle. */
-  useEffect(() => {
-    if (phase.kind === "idle") processNextFlip();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
 
   // Keyboard arrows
   useEffect(() => {
@@ -269,6 +281,9 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
         setPhase({ kind: "idle" });
         return;
       }
+      /* Sync pendingTargetRef so the queue knows where we're heading
+         (and future swipes can advance past this target). */
+      pendingTargetRef.current = target;
       play("pageTurn");
       setPhase({ kind: "exiting", targetIdx: target, direction });
     } else {
@@ -501,78 +516,85 @@ function SimonTableBlock({
 }: {
   tables: Array<Record<SimonColor, SimonColor>>;
 }) {
-  /* tables[i] where i = strikes * 2 + (vowel ? 1 : 0). */
-  const COLS: Array<{ vowel: boolean; strikes: number; head1: string; head2: string }> = [
-    { vowel: false, strikes: 0, head1: "No vowel",   head2: "0 strikes" },
-    { vowel: false, strikes: 1, head1: "No vowel",   head2: "1 strike"  },
-    { vowel: false, strikes: 2, head1: "No vowel",   head2: "2+ strikes"},
-    { vowel: true,  strikes: 0, head1: "Vowel",      head2: "0 strikes" },
-    { vowel: true,  strikes: 1, head1: "Vowel",      head2: "1 strike"  },
-    { vowel: true,  strikes: 2, head1: "Vowel",      head2: "2+ strikes"},
+  /* tables[i] where i = strikes * 2 + (vowel ? 1 : 0).
+     The full 6-column matrix (vowel × strikes) doesn't fit on mobile;
+     split into TWO sub-tables — "No vowel in serial" / "Vowel in serial"
+     — that stack on narrow screens and sit side-by-side on sm+. Each
+     sub-table is 1 Flash column + 3 strike columns, comfortable to
+     read at any width. */
+  const STRIKES = [
+    { strikes: 0, head: "0 strikes" },
+    { strikes: 1, head: "1 strike" },
+    { strikes: 2, head: "2+ strikes" },
   ];
   return (
     <div className="mb-5">
-      <div className="flex items-baseline justify-between mb-1">
+      <div className="flex items-baseline justify-between mb-2">
         <span className="font-serif italic text-[12px] tracking-wide text-ink/75">
           If the bomb flashes the colour at left, press the colour shown
           under your serial / strikes column.
         </span>
       </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
+        {([false, true] as const).map((vowel) => (
+          <SimonSubTable
+            key={vowel ? "vowel" : "novowel"}
+            label={vowel ? "Vowel in serial" : "No vowel in serial"}
+            tables={tables}
+            vowel={vowel}
+            strikes={STRIKES}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SimonSubTable({
+  label,
+  tables,
+  vowel,
+  strikes,
+}: {
+  label: string;
+  tables: Array<Record<SimonColor, SimonColor>>;
+  vowel: boolean;
+  strikes: Array<{ strikes: number; head: string }>;
+}) {
+  return (
+    <div>
+      <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1">
+        {label}
+      </div>
       <table className="w-full border-collapse font-serif text-[13px] sm:text-[14px] ink-text">
         <thead>
           <tr>
-            <th
-              rowSpan={2}
-              className="text-left align-bottom font-bold text-[10px] uppercase tracking-[0.18em] pb-1 pr-2 border-b-[1.2px] border-ink/85 ink-text-bold whitespace-nowrap"
-            >
+            <th className="text-left align-bottom font-bold text-[10px] uppercase tracking-[0.18em] pb-1 pr-1 border-b border-ink/40 ink-text-bold whitespace-nowrap">
               Flash
             </th>
-            {COLS.map((c, i) => (
+            {strikes.map((s) => (
               <th
-                key={i}
-                className="text-center align-bottom font-bold text-[10px] uppercase tracking-[0.18em] px-1.5 pb-0.5 ink-text-bold"
-                style={{
-                  borderLeft: i === 3 ? "1.2px solid rgba(10,20,41,0.85)" : undefined,
-                }}
+                key={s.strikes}
+                className="text-center align-bottom font-mono font-medium text-[10px] tracking-[0.1em] px-1 pb-1 border-b border-ink/40 text-ink/80 whitespace-nowrap"
               >
-                {c.head1}
-              </th>
-            ))}
-          </tr>
-          <tr>
-            {COLS.map((c, i) => (
-              <th
-                key={i}
-                className="text-center align-bottom font-mono font-medium text-[10px] tracking-[0.12em] px-1.5 pb-1 border-b-[1.2px] border-ink/85 text-ink/80"
-                style={{
-                  borderLeft: i === 3 ? "1.2px solid rgba(10,20,41,0.85)" : undefined,
-                }}
-              >
-                {c.head2}
+                {s.head}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {SIMON_LIST.map((flash) => (
-            <tr
-              key={flash}
-              className="border-b border-ink/20 last:border-b-0"
-            >
-              <td className="align-middle pr-2 py-1.5">
+            <tr key={flash} className="border-b border-ink/20 last:border-b-0">
+              <td className="align-middle pr-1 py-1.5">
                 <SimonColorText color={flash} bold />
               </td>
-              {COLS.map((c, i) => {
-                const idx = c.strikes * 2 + (c.vowel ? 1 : 0);
+              {strikes.map((s) => {
+                const idx = s.strikes * 2 + (vowel ? 1 : 0);
                 const press = tables[idx][flash];
                 return (
                   <td
-                    key={i}
-                    className="align-middle text-center px-1.5 py-1.5"
-                    style={{
-                      borderLeft:
-                        i === 3 ? "1.2px solid rgba(10,20,41,0.85)" : undefined,
-                    }}
+                    key={s.strikes}
+                    className="align-middle text-center px-1 py-1.5"
                   >
                     <SimonColorText color={press} />
                   </td>

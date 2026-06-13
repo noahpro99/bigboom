@@ -58,9 +58,25 @@ function pick<T>(rng: () => number, arr: T[]): T {
   return arr[Math.floor(rng() * arr.length)];
 }
 
+/* Fisher-Yates shuffle. Always use this instead of
+   `Array.prototype.sort(() => rng() - 0.5)` because sort calls its
+   comparator a different number of times depending on the JS engine's
+   sort algorithm — V8 uses TimSort, JavaScriptCore (Bun) uses a
+   different one, etc. Mixing those drains the rng at different rates
+   on server vs client, so the SAME seed produces DIFFERENT outputs
+   on different runtimes (and the bomb's stored content stops matching
+   the manual the client regenerates from the same seed). */
+function shuffleArray<T>(rng: () => number, arr: T[]): T[] {
+  const result = [...arr];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
 function pickN<T>(rng: () => number, arr: T[], n: number): T[] {
-  const shuffled = [...arr].sort(() => rng() - 0.5);
-  return shuffled.slice(0, n);
+  return shuffleArray(rng, arr).slice(0, n);
 }
 
 const ALL_COLORS: WireColor[] = ["red", "blue", "yellow", "white", "black"];
@@ -376,7 +392,7 @@ export function generateWireModule(seed: number): WireModuleConfig {
 
   // Pick which slot indices get wires.
   const allIndices = Array.from({ length: slotCount }, (_, i) => i);
-  const shuffledIndices = [...allIndices].sort(() => rng() - 0.5);
+  const shuffledIndices = shuffleArray(rng, allIndices);
   const filledIndices = new Set(shuffledIndices.slice(0, wireCount));
 
   const slots: Slot[] = Array.from({ length: slotCount }, (_, i) =>
@@ -815,7 +831,7 @@ export function generateManualPages(
      cover/toc front matter. */
   for (const p of all) p.kind = "module";
 
-  const modulePages = [...all].sort(() => orderRng() - 0.5);
+  const modulePages = shuffleArray(orderRng, all);
 
   /* Front matter — book cover then a table of contents. These come
      first regardless of seed; their content is largely static but the
@@ -947,7 +963,7 @@ export function generateSymbolsColumns(seed: number): GeneratedSymbol[][] {
   }));
 
   return columnSizes.map((size) => {
-    return [...pool].sort(() => rng() - 0.5).slice(0, size);
+    return shuffleArray(rng, pool).slice(0, size);
   });
 }
 
@@ -966,7 +982,7 @@ export function generateSymbolsModule(
     const winnerIdx = Math.floor(rng() * columns.length);
     const winner = columns[winnerIdx];
     if (winner.length < 4) continue;
-    const actives = [...winner].sort(() => rng() - 0.5).slice(0, 4);
+    const actives = shuffleArray(rng, winner).slice(0, 4);
     const activeIds = new Set(actives.map((s) => s.id));
 
     // Validate uniqueness — no OTHER column may also contain all 4
@@ -980,7 +996,7 @@ export function generateSymbolsModule(
     if (unique) {
       return {
         columns,
-        activeSymbols: [...actives].sort(() => rng() - 0.5),
+        activeSymbols: shuffleArray(rng, actives),
       };
     }
   }
@@ -988,7 +1004,7 @@ export function generateSymbolsModule(
   // Fallback (extremely unlikely): just take the first column's first 4.
   const winner = columns[0];
   const actives = winner.slice(0, 4);
-  return { columns, activeSymbols: [...actives].sort(() => rng() - 0.5) };
+  return { columns, activeSymbols: shuffleArray(rng, actives) };
 }
 
 // Solution = the 4 active symbols ordered by their position in the column
@@ -1012,7 +1028,7 @@ function pickPermutation(rng: () => number): Record<SimonColor, SimonColor> {
   // 9 of which are derangements (no fixed points) — we don't require a
   // full derangement, just not-identity, which gives 23 options.
   while (true) {
-    const shuffled = [...SIMON_COLORS].sort(() => rng() - 0.5);
+    const shuffled = shuffleArray(rng, SIMON_COLORS);
     const identical = shuffled.every((c, i) => c === SIMON_COLORS[i]);
     if (!identical) {
       const map = {} as Record<SimonColor, SimonColor>;
@@ -1312,15 +1328,6 @@ export function tryMazeMove(
 
 // ---- Memory ----
 
-function shuffleArray<T>(rng: () => number, arr: T[]): T[] {
-  const result = [...arr];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
-
 export function generateMemoryModule(
   baseSeed: number,
   instanceSeed?: number
@@ -1476,7 +1483,11 @@ export function generateMorseModule(
     word,
     freqIndex: freqIndices[i],
   }));
-  pool.sort((a, b) => a.word.localeCompare(b.word));
+  /* Plain UTF-16 code-point compare — localeCompare can vary by the
+     runtime's default locale, which would re-order the pool and
+     therefore shift activeIndex (a word-by-different-index per side).
+     Code-point compare is engine-independent. */
+  pool.sort((a, b) => (a.word < b.word ? -1 : a.word > b.word ? 1 : 0));
 
   const iseed = instanceSeed ?? baseSeed;
   const activeRng = mulberry32(iseed + 0x4d4f_ac71);
