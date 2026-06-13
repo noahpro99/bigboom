@@ -5,6 +5,7 @@ import type {
   CompWire,
 } from "../../lib/types";
 import { play } from "../../lib/sound";
+import { WireBody } from "./WireBody";
 
 interface ComplicatedWiresModuleProps {
   module: Module;
@@ -65,6 +66,7 @@ export function ComplicatedWiresModule({
               wire={wire}
               isCut={isCut}
               clickable={clickable}
+              seed={i}
               onClick={() => {
                 if (!clickable) return;
                 play("wireSnip");
@@ -82,31 +84,33 @@ function CompWireSlot({
   wire,
   isCut,
   clickable,
+  seed,
   onClick,
 }: {
   wire: CompWire;
   isCut: boolean;
   clickable: boolean;
+  seed: number;
   onClick: () => void;
 }) {
   /* The wire body — colour reflects the flags. Red/Blue → solid red
      or solid blue; both → diagonal red/blue stripes; neither → plain
      bone-coloured insulator. */
-  const wireBg = wire.hasRed && wire.hasBlue
-    ? `repeating-linear-gradient(135deg, #ef4444 0 6px, #3b82f6 6px 12px)`
-    : wire.hasRed
-    ? `linear-gradient(90deg, color-mix(in srgb, #ef4444 55%, #000) 0%, #ef4444 35%, color-mix(in srgb, #ef4444 70%, #fff) 55%, #ef4444 85%, color-mix(in srgb, #ef4444 60%, #000) 100%)`
+  const baseColor = wire.hasRed
+    ? "#ef4444"
     : wire.hasBlue
-    ? `linear-gradient(90deg, color-mix(in srgb, #3b82f6 55%, #000) 0%, #3b82f6 35%, color-mix(in srgb, #3b82f6 70%, #fff) 55%, #3b82f6 85%, color-mix(in srgb, #3b82f6 60%, #000) 100%)`
-    : `linear-gradient(90deg, #4a5670 0%, #6a7488 35%, #c4cdde 55%, #6a7488 85%, #4a5670 100%)`;
+    ? "#3b82f6"
+    : "#8a93a8";
+  const stripeColor =
+    wire.hasRed && wire.hasBlue ? "#3b82f6" : undefined;
 
   return (
     <button
       disabled={!clickable}
       onClick={onClick}
       className={`relative flex flex-col items-center gap-1.5 group w-8 ${
-        isCut ? "wire-cut" : ""
-      } ${clickable ? "cursor-pointer" : "cursor-default"}`}
+        clickable ? "cursor-pointer" : "cursor-default"
+      }`}
       aria-label={`Complicated wire ${
         wire.hasRed ? "with red " : ""
       }${wire.hasBlue ? "with blue " : ""}${
@@ -133,15 +137,13 @@ function CompWireSlot({
         }
       />
 
-      {/* The wire itself */}
-      <div
-        className="w-3 rounded-full transition-all duration-150 relative"
-        style={{
-          height: "60px",
-          background: wireBg,
-          boxShadow: `0 0 4px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3), inset 0 -1px 0 rgba(0,0,0,0.45)`,
-          opacity: isCut ? 0.28 : 1,
-        }}
+      <WireBody
+        color={baseColor}
+        stripeColor={stripeColor}
+        length={60}
+        orientation="vertical"
+        cut={isCut}
+        seed={seed}
       />
 
       {/* Star marker — small five-pointed glyph just below the slot. */}

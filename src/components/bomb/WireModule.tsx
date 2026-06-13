@@ -1,6 +1,7 @@
 import { Scissors } from "lucide-react";
 import type { Module, WireModuleConfig } from "../../lib/types";
 import { play } from "../../lib/sound";
+import { WireBody } from "./WireBody";
 
 const WIRE_COLORS: Record<string, string> = {
   red: "#ef4444",
@@ -113,8 +114,8 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
                 onCut(i);
               }}
               className={`relative flex flex-col items-center justify-center group w-3 ${
-                isCut ? "wire-cut" : ""
-              } ${clickable ? "cursor-pointer" : "cursor-default"}`}
+                clickable ? "cursor-pointer" : "cursor-default"
+              }`}
               aria-label={isEmpty ? "Empty slot" : `${slot!.color} wire`}
             >
               {isEmpty ? (
@@ -124,16 +125,19 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
                 />
               ) : (
                 <div
-                  className="w-3 rounded-full transition-all duration-150 relative"
                   style={{
-                    height: "64px",
-                    background: `linear-gradient(90deg, color-mix(in srgb, ${color} 55%, #000) 0%, ${color} 35%, color-mix(in srgb, ${color} 70%, #fff) 55%, ${color} 85%, color-mix(in srgb, ${color} 60%, #000) 100%)`,
-                    boxShadow: `0 0 6px ${color}80, inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(0,0,0,0.4)`,
-                    opacity: isCut ? 0.3 : 1,
                     transform: `translateX(${j.dx}px) rotate(${j.tilt}deg)`,
                     transformOrigin: "center",
                   }}
-                />
+                >
+                  <WireBody
+                    color={color!}
+                    length={64}
+                    orientation="vertical"
+                    cut={isCut}
+                    seed={i}
+                  />
+                </div>
               )}
               {clickable && (
                 <Scissors

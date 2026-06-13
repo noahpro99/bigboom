@@ -5,6 +5,7 @@ import type {
   WireSeqColor,
 } from "../../lib/types";
 import { play } from "../../lib/sound";
+import { WireBody } from "./WireBody";
 
 interface WireSequencesModuleProps {
   module: Module;
@@ -87,8 +88,8 @@ export function WireSequencesModule({
                 onCut(i);
               }}
               className={`relative flex items-center gap-2 px-1 py-1 ${
-                isCut ? "wire-cut" : ""
-              } ${clickable ? "cursor-pointer group" : "cursor-default"}`}
+                clickable ? "cursor-pointer group" : "cursor-default"
+              }`}
               aria-label={`${wire.color} wire #${occurrence[i]} (letter ${wire.letter})`}
             >
               <span
@@ -98,14 +99,15 @@ export function WireSequencesModule({
                 {wire.color[0].toUpperCase()}
                 {occurrence[i]}
               </span>
-              <div
-                className="flex-1 h-3 rounded-full relative"
-                style={{
-                  background: `linear-gradient(90deg, color-mix(in srgb, ${colorHex} 55%, #000) 0%, ${colorHex} 35%, color-mix(in srgb, ${colorHex} 70%, #fff) 55%, ${colorHex} 85%, color-mix(in srgb, ${colorHex} 60%, #000) 100%)`,
-                  boxShadow: `0 0 4px ${colorHex}80, inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(0,0,0,0.45)`,
-                  opacity: isCut ? 0.28 : 1,
-                }}
-              />
+              <div className="flex-1 relative">
+                <WireBody
+                  color={colorHex}
+                  length="100%"
+                  orientation="horizontal"
+                  cut={isCut}
+                  seed={i}
+                />
+              </div>
               <span className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-sm border border-steel/55 bg-black/55 font-stencil text-bone text-base">
                 {wire.letter}
               </span>

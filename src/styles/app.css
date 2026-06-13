@@ -896,8 +896,24 @@ button:disabled,
 }
 
 .wire-cut {
-  opacity: 0.28;
-  filter: blur(0.4px) saturate(0.6);
+  /* Legacy hook — the realistic WireBody handles its own cut visual. */
+}
+
+/* Wire-cut snap animation. The second piece holds at origin briefly
+   (the moment the snip happens) then springs to its displaced final
+   transform. Because the element has --final-tx / --final-ty /
+   --final-rot CSS variables set inline, one animation works for both
+   vertical and horizontal wires. */
+@keyframes wire-snap {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  35%  { transform: translate(0, 0) rotate(0deg); }
+  100% {
+    transform: translate(var(--final-tx, 0), var(--final-ty, 0))
+               rotate(var(--final-rot, 0deg));
+  }
+}
+.wire-snap {
+  animation: wire-snap 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .btn-press {

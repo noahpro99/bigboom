@@ -987,37 +987,42 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
   }));
 
   /* Generate candidate layouts and keep the one with the best worst
-     region. Each candidate widely varies:
-       - overall rotation (full 360°)
-       - per-ellipse base angle spread (compressed vs expanded
-         around the 90° spacing)
-       - ring radius (how spread out the lobes are)
-       - per-ellipse eccentricity (tall vs round)
-       - per-ellipse individual jitter
-     The deeper the smallest region's inscribed radius, the more
-     legible the labels will be. */
+     region — BUT require every one of the 16 R/B/S/L combinations to
+     have a non-empty region first. A layout where some sub-region is
+     missing would mean the manual has rules a bomb could trigger
+     with no place to look them up. We score every accepted layout
+     by its smallest region's inscribed radius and keep the highest. */
   let best: {
     ellipses: Ellipse[];
     poles: Array<{ x: number; y: number; r: number } | null>;
     worst: number;
+    missing: number;
   } | null = null;
-  const ATTEMPTS = 18;
+  const ATTEMPTS = 80;
   for (let n = 0; n < ATTEMPTS; n++) {
     const ellipses = rollEllipses(rng);
     const poles = computeRegionPoles(ellipses, W, H);
-    /* Worst is the smallest inscribed radius among NON-EMPTY regions.
-       We treat key 0 (outside all four — usually a big rectangle of
-       empty space) as a special case to avoid distorting the score. */
+    /* Worst is the smallest inscribed radius among the 15 INSIDE
+       regions (key 1..15). Key 0 is the outer paper and gets the
+       text placed at a fixed corner. */
     let worst = Infinity;
+    let missing = 0;
     for (let k = 1; k < 16; k++) {
       const p = poles[k];
-      if (p && p.r < worst) worst = p.r;
+      if (!p) {
+        missing++;
+        continue;
+      }
+      if (p.r < worst) worst = p.r;
     }
-    if (!best || worst > best.worst) {
-      best = { ellipses, poles, worst };
-    }
-    /* Stop early once we hit a comfortable score. */
-    if (best.worst >= 14) break;
+    /* Prefer no-missing-region layouts above all else; tie-break on
+       worst inscribed radius. */
+    const better =
+      !best ||
+      missing < best.missing ||
+      (missing === best.missing && worst > best.worst);
+    if (better) best = { ellipses, poles, worst, missing };
+    if (best.missing === 0 && best.worst >= 12) break;
   }
   const ellipses = best!.ellipses;
   const poles = best!.poles;
@@ -1131,29 +1136,53 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
   );
 }
 
-/* Pick one candidate ellipse layout with wide per-bomb variation. */
+/* Pick one candidate Venn-4 ellipse layout.
+
+   This is the classical 4-set Venn construction: four congruent-ish
+   ellipses with rotations 45° apart (so they form an 8-petal rosette
+   around the origin), all centred close enough that every one
+   contains the origin and the central all-four overlap exists.
+
+   Per-bomb diversity comes from: the base rotation (rotating the
+   whole rosette), the global scale of a/b, the eccentricity ratio,
+   the offset distance from origin, the offset direction pattern, and
+   per-ellipse jitter on top of all of those. */
 function rollEllipses(rng: () => number): Ellipse[] {
   const baseRotation = rng() * Math.PI * 2;
-  /* Spread factor — how compressed/expanded the four base angles
-     are. 1.0 = perfectly even (90° apart), > 1 pulls neighbours
-     apart, < 1 cluster them. */
-  const spread = 0.78 + rng() * 0.6;
-  const ringR = 40 + rng() * 22; // 40..62 — how far from origin
-  /* Per-ellipse jitter range — bigger means weirder asymmetric
-     layouts. */
-  const jitter = 0.08 + rng() * 0.22;
+  /* Mean semi-major / semi-minor for this bomb. The ratio a/b lands
+     somewhere between 1.6 (chubby) and 2.4 (lean). */
+  const ratio = 1.65 + rng() * 0.75;
+  const bMean = 50 + rng() * 14; // 50..64
+  const aMean = bMean * ratio;
+  /* How far each ellipse's centre is offset from origin. Must stay
+     well below bMean or the origin falls outside that ellipse and
+     the all-four overlap collapses. */
+  const offset = 6 + rng() * (bMean * 0.28 - 6);
+  /* The offset direction pattern. Each ellipse k gets a base
+     direction, then a small per-bomb rotation. We use k * π / 2 so
+     centres land in distinct quadrants — that's what produces all 16
+     distinct sub-regions when combined with 45°-spaced rotations. */
+  const offsetPhase = rng() * Math.PI * 2;
   return [0, 1, 2, 3].map((i) => {
-    const baseAngle = (i * Math.PI) / 2 * spread + ((Math.PI / 2) * (1 - spread)) * i;
-    const angle = baseAngle + baseRotation + (rng() - 0.5) * jitter;
-    const r = ringR + (rng() - 0.5) * 14;
-    const a = 78 + rng() * 22; // 78..100 semi-major
-    const b = 42 + rng() * 18; // 42..60 semi-minor
-    const cx = Math.cos(angle) * r;
-    const cy = Math.sin(angle) * r;
-    /* The ellipse's own rotation — tangent to the ring plus a small
-       extra twist. */
-    const rot = angle + Math.PI / 2 + (rng() - 0.5) * 0.4;
-    return { cx, cy, a, b, rot };
+    /* Rotations 45° apart give the Venn-4 layout — NOT 90°. With 90°
+       you only get a 4-petal pinwheel and the central all-four
+       overlap is empty. */
+    const rot = baseRotation + (i * Math.PI) / 4 + (rng() - 0.5) * 0.12;
+    /* Centre offset in a per-ellipse direction. We add a 2π factor of
+       i/4 so successive ellipses sit in adjacent quadrants. */
+    const offAngle = offsetPhase + (i * Math.PI) / 2 + (rng() - 0.5) * 0.25;
+    /* Mild per-ellipse jitter on the radial distance and axis lengths
+       (kept small to preserve validity). */
+    const r = offset * (0.7 + rng() * 0.6);
+    const a = aMean * (0.92 + rng() * 0.16);
+    const b = bMean * (0.92 + rng() * 0.16);
+    return {
+      cx: Math.cos(offAngle) * r,
+      cy: Math.sin(offAngle) * r,
+      a,
+      b,
+      rot,
+    };
   });
 }
 
