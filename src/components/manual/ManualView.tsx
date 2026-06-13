@@ -879,9 +879,12 @@ function WireSeqTablesBlock({
 }
 
 /* Who's On First — two tables, side-by-side on desktop, stacked on
-   mobile. The display-position table maps each pool word to a button
-   position 1-6; the priority table is each word's ordered priority
-   list. Both fit on one manual page because the pool is bounded. */
+   mobile. The display-position panel maps each pool word to a button
+   POSITION in the bomb's 2-column × 3-row button grid. Position 1-6
+   is ambiguous on its own ("which 3? upper-left? middle-left?"), so
+   we render a tiny 2×3 grid icon next to each word with the target
+   cell filled — the expert reads the layout directly. The priority
+   table is each word's ordered priority list. */
 function WhoTablesBlock({
   pool,
   displayPosTable,
@@ -892,25 +895,26 @@ function WhoTablesBlock({
   priorityTable: Record<string, string[]>;
 }) {
   /* Alphabetical scan order matches what an expert would do under
-     pressure ("D… DISPLAY… here it is, position 3"). */
+     pressure ("D… DISPLAY… here it is — upper-right"). */
   const sortedPool = [...pool].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   return (
     <div className="mb-5 grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-5">
       <div>
-        <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1">
-          Display → button position
+        <div className="font-mono font-bold text-[10px] uppercase tracking-[0.22em] pb-1 border-b-[1.2px] border-ink/85 ink-text-bold mb-1 flex items-baseline justify-between gap-3">
+          <span>Display → button position</span>
+          <span className="text-[8px] tracking-[0.15em] text-ink/65 font-normal normal-case">
+            (filled = press this one)
+          </span>
         </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-serif text-[12px]">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-serif text-[12px]">
           {sortedPool.map((w) => (
             <div
               key={w}
-              className="flex items-baseline gap-2 leading-snug"
+              className="flex items-center gap-2 leading-snug"
             >
+              <PositionGrid pos={displayPosTable[w]} />
               <span className="font-bold ink-text-bold tracking-wide flex-1 truncate">
                 {w}
-              </span>
-              <span className="font-mono text-ink/85 tabular-nums">
-                {displayPosTable[w]}
               </span>
             </div>
           ))}
@@ -934,6 +938,38 @@ function WhoTablesBlock({
         </div>
       </div>
     </div>
+  );
+}
+
+/* Tiny 2-column × 3-row grid showing which of the six button slots
+   the word maps to. Position is 1..6, indexed row-major to match the
+   in-bomb button grid: 1 = top-left, 2 = top-right, 3 = middle-left,
+   4 = middle-right, 5 = bottom-left, 6 = bottom-right. */
+function PositionGrid({ pos }: { pos: number }) {
+  const idx = pos - 1;
+  return (
+    <span
+      className="inline-grid shrink-0"
+      style={{
+        gridTemplateColumns: "5px 5px",
+        gridTemplateRows: "4px 4px 4px",
+        gap: 1.5,
+        width: 11.5,
+        height: 14,
+      }}
+      aria-label={`Button position ${pos}`}
+    >
+      {Array.from({ length: 6 }, (_, i) => (
+        <span
+          key={i}
+          className={
+            i === idx
+              ? "bg-ink rounded-[1px]"
+              : "border border-ink/55 rounded-[1px]"
+          }
+        />
+      ))}
+    </span>
   );
 }
 
