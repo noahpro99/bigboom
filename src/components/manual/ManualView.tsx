@@ -999,18 +999,30 @@ function PositionGrid({ pos }: { pos: number }) {
   );
 }
 
+/* Single-character labels printed inside the diagram. We use single
+   letters instead of the 2-5 character COMP_OUTCOME_SHORT names so a
+   label always fits inside its region without overflowing the
+   ellipses. The legend below the diagram translates each letter back
+   to the full rule. */
+const VENN_LETTER: Record<CompWireOutcome, string> = {
+  C: "C", // Cut
+  D: "N", // Don't cut → "N" for No
+  S: "O", // Odd serial → "O"
+  B: "B", // Battery → "B"
+  V: "V", // Vowel → "V"
+};
+
 /* Complicated Wires Venn diagram. Four overlapping ellipses — one per
    wire flag (Red, Blue, Star, LED) — drawn in widely varied positions
-   per bomb. Each region's outcome shorthand is placed at the region's
-   *pole of inaccessibility* (the deepest interior point) rather than
-   its centroid, so labels never fall on a region's narrow waist. Font
-   sizes scale with the inscribed radius; regions too small for even
-   the smallest font drop the label entirely.
+   per bomb. Every region's outcome letter is placed at the region's
+   *pole of inaccessibility* (deepest interior point) so labels never
+   overflow their region. The "no flags" case (a wire with none of
+   Red, Blue, Star, or LED) doesn't sit inside any ellipse, so it gets
+   its own callout box in the corner of the diagram.
 
    Per-bomb generation tries multiple candidate layouts and keeps the
-   one whose smallest non-empty region has the most space — different
-   bombs get genuinely different geometries (rotation, ellipse
-   eccentricities, ring radius, stroke styles, stroke widths). */
+   one with no missing region plus the largest worst-region inscribed
+   radius. */
 function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
   /* Visual seed — folds the outcome table into a 32-bit hash so
      bombs with identical tables stay identical (and most pairs
@@ -1149,21 +1161,23 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
           />
         ))}
 
-        {/* One label per non-empty region, scaled to the local pole
-            radius. Below the minimum-readable threshold we drop the
-            label entirely — better than overflowing the region. */}
+        {/* One single-letter label per inside region (keys 1..15),
+            sized to fit inside the pole's inscribed circle. Truly
+            tiny regions (rare in the Venn-4 layout) get the smallest
+            readable size and stay put — single letters fit almost
+            anywhere. */}
         {poles.map((p, key) => {
-          if (!p) return null;
-          const text = COMP_OUTCOME_SHORT[table[key]];
-          /* Each character is roughly fontSize * 0.6 wide. Solve
-             for a font size that lets the whole label fit inside a
-             circle of radius p.r centred at the pole. We bound the
-             size to a readable range and drop the label if even the
-             smallest size won't fit. */
-          const charW = text.length * 0.62;
-          const fitForRadius = Math.min(p.r * 1.7, (p.r * 2) / charW);
-          const fontSize = Math.max(7.2, Math.min(13, fitForRadius));
-          if (fontSize < 7.2) return null;
+          if (key === 0 || !p) return null;
+          const outcome = table[key];
+          const letter = VENN_LETTER[outcome];
+          /* Single character ≈ fontSize * 0.62 wide. To fit in a
+             circle of radius r centred at the pole, fontSize must
+             satisfy fontSize * 0.62 / 2 ≤ r AND fontSize / 2 ≤ r,
+             i.e. fontSize ≤ 2r and fontSize ≤ 3.22r. The tighter
+             bound is 2r. */
+          const maxFit = p.r * 2;
+          if (maxFit < 5.5) return null; // truly unreadable
+          const fontSize = Math.min(13, Math.max(6, maxFit));
           return (
             <text
               key={key}
@@ -1177,18 +1191,76 @@ function CompWireTableBlock({ table }: { table: CompWireOutcome[] }) {
               fontWeight="700"
               style={{ letterSpacing: "0.04em" }}
             >
-              {text}
+              {letter}
             </text>
           );
         })}
+
+        {/* "No flags" callout — a wire with NONE of Red, Blue, Star,
+            or LED falls outside every ellipse, so it can't be labeled
+            inside the diagram. We render it as a dedicated box in
+            the bottom-left corner with a dashed border (no flag
+            colour applies) and the outcome letter inside. */}
+        {(() => {
+          const outcome = table[0];
+          const letter = VENN_LETTER[outcome];
+          const boxX = -W / 2 + 8;
+          const boxY = H / 2 - 38;
+          const boxW = 64;
+          const boxH = 30;
+          return (
+            <g key="none-callout">
+              <rect
+                x={boxX}
+                y={boxY}
+                width={boxW}
+                height={boxH}
+                rx="3"
+                fill="none"
+                stroke="var(--color-ink)"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+                opacity="0.7"
+              />
+              <text
+                x={boxX + boxW / 2}
+                y={boxY + 10}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="var(--color-ink)"
+                fontFamily="var(--font-stencil, sans-serif)"
+                fontSize="8"
+                fontWeight="700"
+                opacity="0.85"
+                style={{ letterSpacing: "0.18em" }}
+              >
+                NO FLAGS
+              </text>
+              <text
+                x={boxX + boxW / 2}
+                y={boxY + 22}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="var(--color-ink)"
+                fontFamily="var(--font-mono, monospace)"
+                fontSize="11"
+                fontWeight="700"
+              >
+                {letter}
+              </text>
+            </g>
+          );
+        })()}
       </svg>
 
-      {/* Legend — explains what each outcome shorthand resolves to. */}
+      {/* Legend — translates the single-letter region labels back to
+          their rule, and also reproduces the original 2-5 character
+          short names for cross-reference. */}
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-[12px] font-serif">
         {(Object.keys(COMP_OUTCOME_SHORT) as CompWireOutcome[]).map((k) => (
           <div key={k} className="flex items-baseline gap-2">
-            <span className="font-mono font-bold ink-text-bold w-12 shrink-0">
-              {COMP_OUTCOME_SHORT[k]}
+            <span className="font-mono font-bold ink-text-bold w-6 shrink-0 tabular-nums">
+              {VENN_LETTER[k]}
             </span>
             <span className="text-ink/85">{COMP_OUTCOME_TEXT[k]}</span>
           </div>

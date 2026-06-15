@@ -1,4 +1,3 @@
-import { Scissors } from "lucide-react";
 import type {
   Module,
   WireSeqModuleConfig,
@@ -79,18 +78,9 @@ export function WireSequencesModule({
           const clickable = !disabled && !isCut && !module.solved;
           const colorHex = WIRE_COLORS[wire.color];
           return (
-            <button
+            <div
               key={i}
-              disabled={!clickable}
-              onClick={() => {
-                if (!clickable) return;
-                play("wireSnip");
-                onCut(i);
-              }}
-              className={`relative flex items-center gap-2 px-1 py-1 ${
-                clickable ? "cursor-pointer group" : "cursor-default"
-              }`}
-              aria-label={`${wire.color} wire #${occurrence[i]} (letter ${wire.letter})`}
+              className="relative flex items-center gap-2 px-1 py-1"
             >
               <span
                 className="shrink-0 w-9 text-[10px] font-mono font-bold uppercase tracking-[0.15em] text-bone-dim text-center"
@@ -106,23 +96,18 @@ export function WireSequencesModule({
                   orientation="horizontal"
                   cut={isCut}
                   seed={i}
+                  clickable={clickable}
+                  onClick={() => {
+                    play("wireSnip");
+                    onCut(i);
+                  }}
+                  ariaLabel={`${wire.color} wire #${occurrence[i]} (letter ${wire.letter})`}
                 />
               </div>
               <span className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-sm border border-steel/55 bg-black/55 font-stencil text-bone text-base">
                 {wire.letter}
               </span>
-              {clickable && (
-                <Scissors
-                  size={20}
-                  strokeWidth={2}
-                  className="text-bone absolute left-[48%] top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-                  style={{
-                    filter:
-                      "drop-shadow(0 0 0 #050a14) drop-shadow(0 1px 0 #050a14) drop-shadow(0 -1px 0 #050a14) drop-shadow(1px 0 0 #050a14) drop-shadow(-1px 0 0 #050a14) drop-shadow(0 3px 6px rgba(0,0,0,0.95))",
-                  }}
-                />
-              )}
-            </button>
+            </div>
           );
         })}
       </div>

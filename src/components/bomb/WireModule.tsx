@@ -1,4 +1,3 @@
-import { Scissors } from "lucide-react";
 import type { Module, WireModuleConfig } from "../../lib/types";
 import { play } from "../../lib/sound";
 import { WireBody } from "./WireBody";
@@ -105,18 +104,9 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
           const j = WIRE_JITTER[i % WIRE_JITTER.length];
 
           return (
-            <button
+            <div
               key={i}
-              disabled={!clickable}
-              onClick={() => {
-                if (!clickable) return;
-                play("wireSnip");
-                onCut(i);
-              }}
-              className={`relative flex flex-col items-center justify-center group w-3 ${
-                clickable ? "cursor-pointer" : "cursor-default"
-              }`}
-              aria-label={isEmpty ? "Empty slot" : `${slot!.color} wire`}
+              className="relative flex flex-col items-center justify-center w-3"
             >
               {isEmpty ? (
                 <div
@@ -136,22 +126,16 @@ export function WireModule({ module, disabled, onCut }: WireModuleProps) {
                     orientation="vertical"
                     cut={isCut}
                     seed={i}
+                    clickable={clickable}
+                    onClick={() => {
+                      play("wireSnip");
+                      onCut(i);
+                    }}
+                    ariaLabel={`${slot!.color} wire`}
                   />
                 </div>
               )}
-              {clickable && (
-                <Scissors
-                  size={36}
-                  strokeWidth={2}
-                  className="text-bone absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-                  style={{
-                    maxWidth: "none",
-                    filter:
-                      "drop-shadow(0 0 0 #050a14) drop-shadow(0 1px 0 #050a14) drop-shadow(0 -1px 0 #050a14) drop-shadow(1px 0 0 #050a14) drop-shadow(-1px 0 0 #050a14) drop-shadow(0 3px 6px rgba(0,0,0,0.95))",
-                  }}
-                />
-              )}
-            </button>
+            </div>
           );
         })}
       </div>

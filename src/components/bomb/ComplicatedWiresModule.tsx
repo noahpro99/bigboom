@@ -1,4 +1,4 @@
-import { Scissors, Star } from "lucide-react";
+import { Star } from "lucide-react";
 import type {
   Module,
   ComplicatedWiresModuleConfig,
@@ -105,18 +105,7 @@ function CompWireSlot({
     wire.hasRed && wire.hasBlue ? "#3b82f6" : undefined;
 
   return (
-    <button
-      disabled={!clickable}
-      onClick={onClick}
-      className={`relative flex flex-col items-center gap-1.5 group w-8 ${
-        clickable ? "cursor-pointer" : "cursor-default"
-      }`}
-      aria-label={`Complicated wire ${
-        wire.hasRed ? "with red " : ""
-      }${wire.hasBlue ? "with blue " : ""}${
-        wire.hasStar ? "with star " : ""
-      }${wire.hasLED ? "with LED" : ""}`}
-    >
+    <div className="relative flex flex-col items-center gap-1.5 w-8">
       {/* LED above the wire — bright phosphor when lit, dim socket
          when not. Always present so the slot reads the same height. */}
       <div
@@ -144,6 +133,13 @@ function CompWireSlot({
         orientation="vertical"
         cut={isCut}
         seed={seed}
+        clickable={clickable}
+        onClick={onClick}
+        ariaLabel={`Complicated wire ${
+          wire.hasRed ? "with red " : ""
+        }${wire.hasBlue ? "with blue " : ""}${
+          wire.hasStar ? "with star " : ""
+        }${wire.hasLED ? "with LED" : ""}`}
       />
 
       {/* Star marker — small five-pointed glyph just below the slot. */}
@@ -161,18 +157,6 @@ function CompWireSlot({
           />
         )}
       </div>
-
-      {clickable && (
-        <Scissors
-          size={26}
-          strokeWidth={2}
-          className="text-bone absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-          style={{
-            filter:
-              "drop-shadow(0 0 0 #050a14) drop-shadow(0 1px 0 #050a14) drop-shadow(0 -1px 0 #050a14) drop-shadow(1px 0 0 #050a14) drop-shadow(-1px 0 0 #050a14) drop-shadow(0 3px 6px rgba(0,0,0,0.95))",
-          }}
-        />
-      )}
-    </button>
+    </div>
   );
 }
