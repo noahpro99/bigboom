@@ -1,0 +1,26 @@
+{
+  "name": "BigBoom — Bomb Defusal",
+  "short_name": "BigBoom",
+  "description": "Cooperative bomb defusal. Share a seed, sit together, defuse — works fully offline.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050a14",
+  "theme_color": "#050a14",
+  "categories": ["games"],
+  "icons": [
+    {
+      "src": "/images/icon.png",
+      "sizes": "166x168",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/images/icon.png",
+      "sizes": "166x168",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -9,9 +9,15 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as OfflineRouteImport } from './routes/offline'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as GameGameIdRouteImport } from './routes/game.$gameId'
 
+const OfflineRoute = OfflineRouteImport.update({
+  id: '/offline',
+  path: '/offline',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -25,32 +31,43 @@ const GameGameIdRoute = GameGameIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/offline': typeof OfflineRoute
   '/game/$gameId': typeof GameGameIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/offline': typeof OfflineRoute
   '/game/$gameId': typeof GameGameIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/offline': typeof OfflineRoute
   '/game/$gameId': typeof GameGameIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/game/$gameId'
+  fullPaths: '/' | '/offline' | '/game/$gameId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/game/$gameId'
-  id: '__root__' | '/' | '/game/$gameId'
+  to: '/' | '/offline' | '/game/$gameId'
+  id: '__root__' | '/' | '/offline' | '/game/$gameId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  OfflineRoute: typeof OfflineRoute
   GameGameIdRoute: typeof GameGameIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/offline': {
+      id: '/offline'
+      path: '/offline'
+      fullPath: '/offline'
+      preLoaderRoute: typeof OfflineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -70,6 +87,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  OfflineRoute: OfflineRoute,
   GameGameIdRoute: GameGameIdRoute,
 }
 export const routeTree = rootRouteImport

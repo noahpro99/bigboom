@@ -3,8 +3,9 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { createGame } from "../server/game";
 import { getSessionId } from "../lib/session";
 import { play, preloadAll, playMusic, stopMusic } from "../lib/sound";
+import { decodeMatch } from "../lib/offlineCode";
 import { ProfileButton } from "../components/ProfileButton";
-import { Bomb, ArrowRight, Link2, AlertTriangle } from "lucide-react";
+import { Bomb, ArrowRight, Link2, AlertTriangle, WifiOff } from "lucide-react";
 import { DiscordIcon } from "../components/icons/Discord";
 
 export const Route = createFileRoute("/")({
@@ -62,6 +63,14 @@ function HomePage() {
   }
 
   async function joinFromText(text: string) {
+    // An offline match code (or a /offline?join= link) routes to the
+    // serverless offline flow.
+    if (decodeMatch(text)) {
+      setPasteError("");
+      play("menuButton");
+      await navigate({ to: "/offline", search: { join: text.trim() } });
+      return;
+    }
     const gameId = parseInviteLink(text);
     if (!gameId) {
       setPasteError("Couldn't read a game from that link");
@@ -157,6 +166,26 @@ function HomePage() {
               <div className="absolute bottom-0 left-0 right-0 h-1 tx-stripes" />
             </button>
 
+            {/* Play offline — serverless, QR-shared seed, two devices in
+                the same room with no internet. */}
+            <button
+              onClick={() => {
+                play("menuButton");
+                navigate({ to: "/offline" });
+              }}
+              className="group relative overflow-hidden border border-phosphor/45 hover:border-phosphor bg-phosphor/8 hover:bg-phosphor/14 text-phosphor transition-colors font-stencil text-xl tracking-wider uppercase px-6 py-4 flex items-center justify-between"
+            >
+              <span className="flex items-center gap-3">
+                <WifiOff size={24} strokeWidth={2.5} />
+                <span>Play Offline</span>
+              </span>
+              <ArrowRight
+                size={20}
+                strokeWidth={2.5}
+                className="transition-transform group-hover:translate-x-1"
+              />
+            </button>
+
             {/* Discord */}
             <a
               href={DISCORD_URL}
@@ -183,7 +212,7 @@ function HomePage() {
                   }}
                   onPaste={handlePaste}
                   onFocus={() => play("menuButton")}
-                  placeholder="Paste invite link here"
+                  placeholder="Paste invite link or offline code"
                   className="w-full bg-void/60 border border-rib focus:border-amber/60 rounded-none px-3 py-2.5 text-bone font-mono text-sm placeholder:text-steel-light focus:outline-none transition-colors"
                 />
                 {pasteError && (
