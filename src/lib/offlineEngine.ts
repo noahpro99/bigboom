@@ -153,14 +153,15 @@ function spawnModules(seed: number, moduleTypes: ModuleType[]): Module[] {
    no lobby gating, so arming and starting are the same moment. */
 export function createOfflineGame(
   match: OfflineMatch,
-  role: PlayerRole
+  role: PlayerRole,
+  gameId = "offline"
 ): GameState {
   const serial = generateSerialNumber(match.seed);
   const modules = spawnModules(match.seed, match.moduleTypes);
   const now = Math.floor(Date.now() / 1000);
   return {
     game: {
-      id: "offline",
+      id: gameId,
       seed: match.seed,
       serial,
       status: "active",

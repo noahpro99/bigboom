@@ -13,11 +13,11 @@
  * Because offline mode is fully client-side and deterministic from the
  * seed, the first online visit primes the cache and every later visit
  * works with the radio off. */
-const CACHE = "bigboom-v1";
+const CACHE = "bigboom-v2";
 
 // Best-effort precache of the two entry pages + icon. addAll is allowed to
 // fail (e.g. behind auth or transient errors) without aborting install.
-const PRECACHE_URLS = ["/", "/offline", "/images/icon.png", "/manifest.webmanifest"];
+const PRECACHE_URLS = ["/", "/lobby", "/images/icon.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   self.skipWaiting();
@@ -67,7 +67,7 @@ self.addEventListener("fetch", (event) => {
           const cache = await caches.open(CACHE);
           return (
             (await cache.match(req)) ||
-            (await cache.match("/offline")) ||
+            (await cache.match("/lobby")) ||
             (await cache.match("/")) ||
             new Response("Offline", { status: 503, statusText: "Offline" })
           );

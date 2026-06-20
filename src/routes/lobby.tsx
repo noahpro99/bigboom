@@ -37,31 +37,37 @@ import {
   normalizeMatch,
   randomSeed,
 } from "../lib/offlineCode";
-import { PRESET_CONFIGS, type GameState, type ModuleType, type PlayerRole, type Preset } from "../lib/types";
+import { newRoomId, reportLobby, reportResult } from "../lib/sync";
+import {
+  PRESET_CONFIGS,
+  type GameState,
+  type ModuleType,
+  type PlayerRole,
+  type Preset,
+} from "../lib/types";
 import {
   Bomb,
   BookOpen,
-  WifiOff,
   Home,
   ArrowRight,
-  ArrowLeft,
-  Camera,
   Check,
   Copy,
   AlertTriangle,
+  Share2,
   ScanLine,
   RotateCcw,
   ShieldCheck,
   Skull,
   Dice5,
   LogOut,
+  X,
 } from "lucide-react";
 
-export const Route = createFileRoute("/offline")({
+export const Route = createFileRoute("/lobby")({
   validateSearch: (search: Record<string, unknown>): { join?: string } => ({
     join: typeof search.join === "string" ? search.join : undefined,
   }),
-  component: OfflinePage,
+  component: LobbyPage,
 });
 
 const STORAGE_KEY = "bigboom-offline";
@@ -70,6 +76,7 @@ interface SavedGame {
   gameState: GameState;
   match: OfflineMatch;
   role: PlayerRole;
+  gameId: string;
 }
 
 function loadSaved(): SavedGame | null {
@@ -95,15 +102,14 @@ function saveGame(s: SavedGame | null) {
   }
 }
 
-type Phase = "home" | "create" | "join" | "play";
-
-function OfflinePage() {
+function LobbyPage() {
   const navigate = useNavigate();
   const { join } = Route.useSearch();
 
-  const [phase, setPhase] = useState<Phase>("home");
+  const [phase, setPhase] = useState<"lobby" | "play">("lobby");
   const [match, setMatch] = useState<OfflineMatch | null>(null);
   const [role, setRole] = useState<PlayerRole>("defuser");
+  const [gameId, setGameId] = useState<string>("");
   const [game, setGame] = useState<GameState | null>(null);
 
   // Audio unlock + ambient menu music (mirrors the home page).
@@ -123,6 +129,7 @@ function OfflinePage() {
     if (saved && saved.gameState.game.status === "active") {
       setMatch(saved.match);
       setRole(saved.role);
+      setGameId(saved.gameId);
       setGame(saved.gameState);
       setPhase("play");
       return;
@@ -132,7 +139,6 @@ function OfflinePage() {
       if (decoded) {
         setMatch(decoded);
         setRole("expert");
-        setPhase("join");
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -145,42 +151,44 @@ function OfflinePage() {
   }, [phase, game?.game.status]);
 
   function startMatch(m: OfflineMatch, r: PlayerRole) {
-    const fresh = createOfflineGame(m, r);
+    const id = newRoomId();
+    const fresh = createOfflineGame(m, r, id);
     setMatch(m);
     setRole(r);
+    setGameId(id);
     setGame(fresh);
     setPhase("play");
-    saveGame({ gameState: fresh, match: m, role: r });
+    saveGame({ gameState: fresh, match: m, role: r, gameId: id });
     play("menuButton");
+    // Optimistic, best-effort: register the lobby online if we can. Never
+    // blocks — if it fails or we're offline, the game plays on regardless.
+    reportLobby(id, fresh.game.serial, m);
   }
 
   const updateGame = useCallback(
     (next: GameState) => {
       setGame(next);
-      if (match) saveGame({ gameState: next, match, role });
+      if (match) saveGame({ gameState: next, match, role, gameId });
     },
-    [match, role]
+    [match, role, gameId]
   );
 
-  function exitToHome() {
+  function exitToLobby() {
     saveGame(null);
     setGame(null);
-    setPhase("home");
+    setPhase("lobby");
   }
 
   if (phase === "play" && game && match) {
     return (
-      <OfflinePlay
+      <PlayScreen
         gameState={game}
         role={role}
+        gameId={gameId}
+        match={match}
         setGameState={updateGame}
-        onReplay={() => startMatch({ ...match, seed: match.seed }, role)}
-        onNewMatch={() => {
-          saveGame(null);
-          setGame(null);
-          setPhase("create");
-        }}
-        onExit={exitToHome}
+        onReplay={() => startMatch(match, role)}
+        onExit={exitToLobby}
       />
     );
   }
@@ -202,92 +210,25 @@ function OfflinePage() {
       </div>
 
       <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12 relative z-10">
-        <div className="text-center mb-7 reveal">
+        <div className="text-center mb-6 reveal">
           <div className="inline-flex items-center gap-2 mb-3 text-phosphor border border-phosphor/40 px-3 py-1 text-[10px] font-mono uppercase tracking-[0.3em]">
-            <WifiOff size={12} />
-            <span>Offline Field Mode</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-phosphor pulse-dot" />
+            <span>Briefing Room</span>
           </div>
           <h1 className="font-stencil leading-[0.85] tracking-tight">
             <span className="text-4xl text-bone">BIG</span>
             <span className="text-4xl text-crimson">BOOM</span>
           </h1>
-          <p className="text-bone-dim font-mono text-[10px] uppercase tracking-[0.3em] mt-2 max-w-xs mx-auto leading-relaxed">
-            No server. No internet. Share a seed, sit together, defuse.
+          <p className="text-bone-dim font-mono text-[10px] uppercase tracking-[0.3em] mt-2">
+            Two players · One survives
           </p>
         </div>
 
-        {phase === "home" && (
-          <OfflineHome
-            onCreate={() => {
-              play("menuButton");
-              setPhase("create");
-            }}
-            onJoin={() => {
-              play("menuButton");
-              setPhase("join");
-            }}
-          />
-        )}
-
-        {phase === "create" && (
-          <OfflineCreate
-            initialMatch={match}
-            onBack={() => setPhase("home")}
-            onStart={startMatch}
-          />
-        )}
-
-        {phase === "join" && (
-          <OfflineJoin
-            initialMatch={match}
-            onBack={() => setPhase("home")}
-            onStart={startMatch}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ── Home: pick host or join ─────────────────────────────────────────── */
-function OfflineHome({
-  onCreate,
-  onJoin,
-}: {
-  onCreate: () => void;
-  onJoin: () => void;
-}) {
-  return (
-    <div className="w-full max-w-md flex flex-col gap-3 reveal" style={{ animationDelay: "120ms" }}>
-      <button
-        onClick={onCreate}
-        className="group relative overflow-hidden bg-amber text-void hover:bg-amber-glow transition-colors font-stencil text-2xl tracking-wider uppercase px-6 py-5 flex items-center justify-between"
-      >
-        <span className="flex items-center gap-3">
-          <Bomb size={28} strokeWidth={2.5} />
-          <span>Host a Match</span>
-        </span>
-        <ArrowRight size={22} strokeWidth={2.5} className="transition-transform group-hover:translate-x-1" />
-        <div className="absolute bottom-0 left-0 right-0 h-1 tx-stripes" />
-      </button>
-
-      <button
-        onClick={onJoin}
-        className="group relative border border-cyan-rad/50 hover:border-cyan-rad bg-cyan-rad/8 hover:bg-cyan-rad/14 text-cyan-rad transition-colors font-stencil text-2xl tracking-wider uppercase px-6 py-5 flex items-center justify-between"
-      >
-        <span className="flex items-center gap-3">
-          <ScanLine size={26} strokeWidth={2.5} />
-          <span>Join a Match</span>
-        </span>
-        <ArrowRight size={22} strokeWidth={2.5} className="transition-transform group-hover:translate-x-1" />
-      </button>
-
-      <div className="mt-4 border border-rib bg-chassis/60 backdrop-blur-sm p-4 text-[11px] font-mono text-bone-dim/80 leading-relaxed">
-        One of you hosts and shows a QR code. The other joins by scanning it
-        — or typing the short code. You'll each pick a role: one
-        <span className="text-amber"> Defuser</span> (operates the bomb), one
-        <span className="text-cyan-rad"> Expert</span> (reads the manual).
-        Then talk it out, in person.
+        <LobbyScreen
+          initialMatch={match}
+          joinedFromLink={!!join && !!match}
+          onStart={startMatch}
+        />
       </div>
     </div>
   );
@@ -369,18 +310,22 @@ function RolePicker({
   );
 }
 
-/* ── Create: config + seed + share QR + role + start ─────────────────── */
-function OfflineCreate({
+/* The single lobby screen. You host by default (editable config + a Share
+   button that hands a QR/code to your partner). If you arrive via someone
+   else's code — by scanning or pasting — the config locks to their bomb
+   and you just pick a role + start. The Share QR is generated client-side,
+   so it works with no connection. */
+function LobbyScreen({
   initialMatch,
-  onBack,
+  joinedFromLink,
   onStart,
 }: {
   initialMatch: OfflineMatch | null;
-  onBack: () => void;
+  joinedFromLink: boolean;
   onStart: (m: OfflineMatch, r: PlayerRole) => void;
 }) {
-  const [seed, setSeed] = useState<number>(() => initialMatch?.seed ?? randomSeed());
   const base = PRESET_CONFIGS.standard;
+  const [seed, setSeed] = useState<number>(() => initialMatch?.seed ?? randomSeed());
   const [preset, setPreset] = useState<Preset>(initialMatch?.preset ?? base.preset);
   const [timerSeconds, setTimerSeconds] = useState<number>(
     initialMatch?.timerSeconds ?? base.timerSeconds
@@ -388,7 +333,14 @@ function OfflineCreate({
   const [moduleTypes, setModuleTypes] = useState<ModuleType[]>(
     initialMatch?.moduleTypes ?? [...base.moduleTypes]
   );
-  const [role, setRole] = useState<PlayerRole>("defuser");
+  // "joined" = playing a partner's bomb (config is theirs, read-only).
+  const [joined, setJoined] = useState<boolean>(joinedFromLink);
+  const [role, setRole] = useState<PlayerRole>(joinedFromLink ? "expert" : "defuser");
+
+  const [shareOpen, setShareOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [codeText, setCodeText] = useState("");
+  const [codeError, setCodeError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const match = useMemo(
@@ -399,6 +351,28 @@ function OfflineCreate({
   const origin =
     typeof window !== "undefined" ? window.location.origin : "https://bigboom.app";
   const url = inviteUrl(origin, match);
+
+  function applyMatch(m: OfflineMatch) {
+    setSeed(m.seed);
+    setPreset(m.preset);
+    setTimerSeconds(m.timerSeconds);
+    setModuleTypes(m.moduleTypes);
+  }
+
+  function adoptCode(raw: string) {
+    const decoded = decodeMatch(raw);
+    if (!decoded) {
+      setCodeError("That doesn't look like a match code.");
+      return;
+    }
+    setCodeError("");
+    applyMatch(decoded);
+    setJoined(true);
+    setRole("expert");
+    setScanOpen(false);
+    setShareOpen(false);
+    play("menuButton");
+  }
 
   function onConfigChange(next: {
     preset?: Preset;
@@ -412,12 +386,10 @@ function OfflineCreate({
       setModuleTypes([...cfg.moduleTypes]);
       return;
     }
-    const nextTypes = next.moduleTypes ?? moduleTypes;
-    const nextTimer = next.timerSeconds ?? timerSeconds;
     const m = matchFromConfig(seed, {
       preset: "custom",
-      timerSeconds: nextTimer,
-      moduleTypes: nextTypes,
+      timerSeconds: next.timerSeconds ?? timerSeconds,
+      moduleTypes: next.moduleTypes ?? moduleTypes,
     });
     setPreset(m.preset);
     setTimerSeconds(m.timerSeconds);
@@ -435,80 +407,186 @@ function OfflineCreate({
     }
   }
 
+  async function nativeShare() {
+    play("menuButton");
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: "BigBoom",
+          text: `Defuse with me — match code ${code}`,
+          url,
+        });
+        return;
+      } catch {
+        /* cancelled or unsupported — fall back to the panel */
+      }
+    }
+    setShareOpen((v) => !v);
+  }
+
   return (
     <div className="w-full max-w-lg bg-chassis/70 border border-rib backdrop-blur-sm reveal">
       <div className="flex items-center justify-between px-4 py-2 bg-rib/60 border-b border-rib text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
-        <button onClick={onBack} className="flex items-center gap-1 hover:text-bone">
-          <ArrowLeft size={12} /> Back
-        </button>
-        <span>Host · Build the bomb</span>
+        <span>{joined ? "Joined a match" : "Build the bomb"}</span>
+        <span>Voice / in-person required</span>
       </div>
 
-      {/* Share panel — QR + code. This is what the partner scans/types. */}
-      <div className="p-5 border-b border-rib/60 flex flex-col items-center gap-3">
-        <QrCode value={url} size={200} />
-        <div className="w-full flex items-stretch gap-2">
-          <code className="flex-1 min-w-0 truncate bg-void/60 border border-rib px-3 py-2 font-mono text-sm text-phosphor tracking-wide">
-            {code}
-          </code>
+      {/* Share + Join actions */}
+      <div className="p-5 border-b border-rib/60 space-y-3">
+        <div className="grid grid-cols-2 gap-2">
           <button
-            onClick={copyCode}
-            className="px-3 border border-amber/50 hover:border-amber bg-amber/5 hover:bg-amber/10 text-amber transition-colors flex items-center gap-1.5 font-mono text-xs uppercase tracking-[0.2em]"
+            onClick={nativeShare}
+            className="px-3 py-3 border border-amber/50 hover:border-amber bg-amber/8 hover:bg-amber/12 text-amber transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2"
           >
-            {copied ? <Check size={14} className="text-phosphor" /> : <Copy size={14} />}
-            {copied ? "Copied" : "Copy"}
+            <Share2 size={18} strokeWidth={2.5} /> Share
+          </button>
+          <button
+            onClick={() => {
+              play("menuButton");
+              setScanOpen((v) => !v);
+              setShareOpen(false);
+            }}
+            className="px-3 py-3 border border-cyan-rad/50 hover:border-cyan-rad bg-cyan-rad/8 hover:bg-cyan-rad/12 text-cyan-rad transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2"
+          >
+            <ScanLine size={18} strokeWidth={2.5} /> Join
           </button>
         </div>
-        <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-bone-dim/55 text-center">
-          Partner scans this in Join, or types the code. Same code = same bomb.
-        </p>
+
+        {shareOpen && (
+          <div className="border border-rib bg-void/40 p-4 flex flex-col items-center gap-3">
+            <QrCode value={url} size={196} />
+            <div className="w-full flex items-stretch gap-2">
+              <code className="flex-1 min-w-0 truncate bg-void/60 border border-rib px-3 py-2 font-mono text-sm text-phosphor tracking-wide">
+                {code}
+              </code>
+              <button
+                onClick={copyCode}
+                className="px-3 border border-amber/50 hover:border-amber bg-amber/5 hover:bg-amber/10 text-amber transition-colors flex items-center gap-1.5 font-mono text-xs uppercase tracking-[0.2em]"
+              >
+                {copied ? <Check size={14} className="text-phosphor" /> : <Copy size={14} />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-bone-dim/55 text-center">
+              Partner taps Join and scans this — or types the code. Works offline.
+            </p>
+          </div>
+        )}
+
+        {scanOpen && (
+          <div className="border border-rib bg-void/40 p-4 space-y-3">
+            <QrScanner
+              onClose={() => setScanOpen(false)}
+              onResult={(value) => {
+                setCodeText(value);
+                adoptCode(value);
+              }}
+            />
+            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/50">
+              <div className="h-px flex-1 bg-rib" /> or type it <div className="h-px flex-1 bg-rib" />
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={codeText}
+                onChange={(e) => {
+                  setCodeText(e.target.value);
+                  setCodeError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") adoptCode(codeText);
+                }}
+                placeholder="bb1.xxxx.xx.00000000000"
+                className="flex-1 min-w-0 bg-void/60 border border-rib focus:border-cyan-rad/60 px-3 py-2.5 text-bone font-mono text-sm placeholder:text-steel-light focus:outline-none transition-colors"
+                aria-label="Match code"
+              />
+              <button
+                onClick={() => adoptCode(codeText)}
+                className="px-3 border border-cyan-rad/50 hover:border-cyan-rad text-cyan-rad font-mono text-xs uppercase tracking-[0.2em]"
+              >
+                Load
+              </button>
+            </div>
+            {codeError && (
+              <p className="text-crimson text-xs font-mono flex items-center gap-1.5">
+                <AlertTriangle size={11} /> {codeError}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Seed */}
-      <div className="p-5 border-b border-rib/60">
-        <div className="flex items-baseline justify-between mb-2">
-          <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
-            Seed
+      {joined ? (
+        /* Joined a partner's bomb — config is theirs. */
+        <div className="px-5 py-4 border-b border-rib/60 flex items-center justify-between">
+          <span className="text-phosphor font-mono text-[11px] uppercase tracking-[0.18em] flex items-center gap-1.5">
+            <Check size={13} /> {match.preset} · {Math.floor(match.timerSeconds / 60)}m ·{" "}
+            {match.moduleTypes.length} mod
           </span>
           <button
             onClick={() => {
               play("menuButton");
+              setJoined(false);
+              setRole("defuser");
               setSeed(randomSeed());
             }}
-            className="text-[10px] font-mono uppercase tracking-[0.2em] text-phosphor hover:text-phosphor/80 flex items-center gap-1"
+            className="text-[10px] font-mono uppercase tracking-[0.18em] text-bone-dim hover:text-bone flex items-center gap-1"
           >
-            <Dice5 size={13} /> Randomize
+            <X size={12} /> Host my own
           </button>
         </div>
-        <input
-          inputMode="numeric"
-          value={seed}
-          onChange={(e) => {
-            const n = parseInt(e.target.value.replace(/\D/g, ""), 10);
-            setSeed(Number.isFinite(n) ? n >>> 0 : 0);
-          }}
-          className="w-full bg-void/60 border border-rib focus:border-amber/60 px-3 py-2.5 text-bone font-mono text-sm focus:outline-none transition-colors"
-          aria-label="Seed"
-        />
-      </div>
+      ) : (
+        <>
+          {/* Seed */}
+          <div className="px-5 py-4 border-b border-rib/60">
+            <div className="flex items-baseline justify-between mb-2">
+              <span className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
+                Seed
+              </span>
+              <button
+                onClick={() => {
+                  play("menuButton");
+                  setSeed(randomSeed());
+                }}
+                className="text-[10px] font-mono uppercase tracking-[0.2em] text-phosphor hover:text-phosphor/80 flex items-center gap-1"
+              >
+                <Dice5 size={13} /> Randomize
+              </button>
+            </div>
+            <input
+              inputMode="numeric"
+              value={seed}
+              onChange={(e) => {
+                const n = parseInt(e.target.value.replace(/\D/g, ""), 10);
+                setSeed(Number.isFinite(n) ? n >>> 0 : 0);
+              }}
+              className="w-full bg-void/60 border border-rib focus:border-amber/60 px-3 py-2.5 text-bone font-mono text-sm focus:outline-none transition-colors"
+              aria-label="Seed"
+            />
+          </div>
 
-      {/* Config */}
-      <div className="p-5 border-b border-rib/60">
-        <ConfigSection
-          preset={preset}
-          timerSeconds={timerSeconds}
-          moduleTypes={moduleTypes}
-          onChange={onConfigChange}
-          pending={false}
-        />
-      </div>
+          {/* Config */}
+          <div className="p-5 border-b border-rib/60">
+            <ConfigSection
+              preset={preset}
+              timerSeconds={timerSeconds}
+              moduleTypes={moduleTypes}
+              onChange={onConfigChange}
+              pending={false}
+            />
+          </div>
+        </>
+      )}
 
       {/* Role */}
       <div className="p-5 border-b border-rib/60">
         <RolePicker
           role={role}
           onPick={setRole}
-          hint="Pick whichever you want — your partner takes the other on their device."
+          hint={
+            joined
+              ? "Take whichever role your partner didn't."
+              : "Pick whichever you want — your partner takes the other on their device."
+          }
         />
       </div>
 
@@ -530,151 +608,34 @@ function OfflineCreate({
           {moduleTypes.length > 0 && <ArrowRight size={20} strokeWidth={2.5} />}
         </button>
         <p className="mt-2 text-[10px] font-mono uppercase tracking-[0.18em] text-bone-dim/55 text-center">
-          Solo-friendly — no need to wait for the other role.
+          Plays instantly, online or off — solo or with a partner.
         </p>
       </div>
     </div>
   );
 }
 
-/* ── Join: scan or type a code, then pick role + start ───────────────── */
-function OfflineJoin({
-  initialMatch,
-  onBack,
-  onStart,
-}: {
-  initialMatch: OfflineMatch | null;
-  onBack: () => void;
-  onStart: (m: OfflineMatch, r: PlayerRole) => void;
-}) {
-  const [scanning, setScanning] = useState(false);
-  const [text, setText] = useState(initialMatch ? encodeMatch(initialMatch) : "");
-  const [match, setMatch] = useState<OfflineMatch | null>(initialMatch);
-  const [error, setError] = useState("");
-  const [role, setRole] = useState<PlayerRole>("expert");
-
-  function tryDecode(raw: string) {
-    const decoded = decodeMatch(raw);
-    if (!decoded) {
-      setError("That doesn't look like a match code.");
-      setMatch(null);
-      return;
-    }
-    setError("");
-    setMatch(decoded);
-    play("menuButton");
-  }
-
-  return (
-    <div className="w-full max-w-lg bg-chassis/70 border border-rib backdrop-blur-sm reveal">
-      <div className="flex items-center justify-between px-4 py-2 bg-rib/60 border-b border-rib text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
-        <button onClick={onBack} className="flex items-center gap-1 hover:text-bone">
-          <ArrowLeft size={12} /> Back
-        </button>
-        <span>Join · Scan your partner's code</span>
-      </div>
-
-      <div className="p-5 border-b border-rib/60 flex flex-col gap-3">
-        {scanning ? (
-          <QrScanner
-            onClose={() => setScanning(false)}
-            onResult={(value) => {
-              setScanning(false);
-              setText(value);
-              tryDecode(value);
-            }}
-          />
-        ) : (
-          <button
-            onClick={() => {
-              play("menuButton");
-              setScanning(true);
-            }}
-            className="w-full px-4 py-4 border border-cyan-rad/50 hover:border-cyan-rad bg-cyan-rad/8 hover:bg-cyan-rad/14 text-cyan-rad transition-colors font-stencil text-lg uppercase tracking-[0.2em] flex items-center justify-center gap-3"
-          >
-            <Camera size={22} strokeWidth={2.5} /> Scan QR Code
-          </button>
-        )}
-
-        <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/50">
-          <div className="h-px flex-1 bg-rib" /> or type it <div className="h-px flex-1 bg-rib" />
-        </div>
-
-        <input
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            setError("");
-          }}
-          onBlur={() => text.trim() && tryDecode(text)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") tryDecode(text);
-          }}
-          placeholder="bb1.xxxx.xx.00000000000"
-          className="w-full bg-void/60 border border-rib focus:border-cyan-rad/60 px-3 py-2.5 text-bone font-mono text-sm placeholder:text-steel-light focus:outline-none transition-colors"
-          aria-label="Match code"
-        />
-        {error && (
-          <p className="text-crimson text-xs font-mono flex items-center gap-1.5">
-            <AlertTriangle size={11} /> {error}
-          </p>
-        )}
-      </div>
-
-      {match && (
-        <>
-          <div className="px-5 py-3 border-b border-rib/60 flex items-center justify-between text-[11px] font-mono uppercase tracking-[0.18em]">
-            <span className="text-phosphor flex items-center gap-1.5">
-              <Check size={13} /> Match found
-            </span>
-            <span className="text-bone-dim">
-              {match.preset} · {Math.floor(match.timerSeconds / 60)}m ·{" "}
-              {match.moduleTypes.length} mod
-            </span>
-          </div>
-          <div className="p-5 border-b border-rib/60">
-            <RolePicker
-              role={role}
-              onPick={setRole}
-              hint="Take whichever role your partner didn't."
-            />
-          </div>
-          <div className="p-5">
-            <button
-              onClick={() => onStart(match, role)}
-              className="w-full px-6 py-4 bg-crimson hover:bg-crimson-bright text-bone font-stencil text-xl uppercase tracking-[0.2em] transition-all flex items-center justify-between"
-            >
-              <span className="flex items-center gap-3">
-                <Bomb size={22} strokeWidth={2.5} /> Join & Play
-              </span>
-              <ArrowRight size={20} strokeWidth={2.5} />
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-/* ── Play: local engine drives BombView (defuser) / ManualView (expert) ─ */
-function OfflinePlay({
+/* Local engine drives BombView (defuser) / ManualView (expert). Results
+   are optimistically reported online; gameplay never waits on it. */
+function PlayScreen({
   gameState,
   role,
+  gameId,
+  match,
   setGameState,
   onReplay,
-  onNewMatch,
   onExit,
 }: {
   gameState: GameState;
   role: PlayerRole;
+  gameId: string;
+  match: OfflineMatch;
   setGameState: (s: GameState) => void;
   onReplay: () => void;
-  onNewMatch: () => void;
   onExit: () => void;
 }) {
   const { game } = gameState;
 
-  // Keep the latest state in a ref so the stable dispatch never goes stale.
   const stateRef = useRef(gameState);
   useEffect(() => {
     stateRef.current = gameState;
@@ -712,8 +673,8 @@ function OfflinePlay({
     [dispatch]
   );
 
-  // Local timer — flip to "lost" when it runs out. There's no server, so
-  // each device enforces its own clock against the shared startedAt.
+  // Local timer — flip to "lost" when it runs out. Each device enforces
+  // its own clock against the shared startedAt; no server involved.
   useEffect(() => {
     if (game.status !== "active") return;
     const id = setInterval(() => {
@@ -724,6 +685,21 @@ function OfflinePlay({
     }, 500);
     return () => clearInterval(id);
   }, [game.status, setGameState]);
+
+  // Optimistic, best-effort: report the result once the game ends. The
+  // overlay shows immediately regardless of whether this reaches the server.
+  const reportedRef = useRef(false);
+  useEffect(() => {
+    if (reportedRef.current) return;
+    if (game.status !== "won" && game.status !== "lost") return;
+    reportedRef.current = true;
+    let durationMs: number | null = null;
+    if (game.startedAt != null) {
+      const elapsed = Math.floor(Date.now() / 1000) - game.startedAt;
+      durationMs = Math.max(0, Math.min(elapsed, game.timerSeconds)) * 1000;
+    }
+    reportResult(gameId, match, game.status, durationMs);
+  }, [game.status, game.startedAt, game.timerSeconds, gameId, match]);
 
   const isOver = game.status === "won" || game.status === "lost";
 
@@ -750,11 +726,10 @@ function OfflinePlay({
       )}
 
       {isOver && (
-        <OfflineGameOver
+        <GameOver
           status={game.status as "won" | "lost"}
           role={role}
           onReplay={onReplay}
-          onNewMatch={onNewMatch}
           onExit={onExit}
         />
       )}
@@ -762,8 +737,8 @@ function OfflinePlay({
   );
 }
 
-/* Floating timer + leave control overlaid on the Expert's manual so they
-   feel the clock without a full bomb chassis. */
+/* Floating timer + controls overlaid on the Expert's manual so they feel
+   the clock without a full bomb chassis. */
 function ExpertHud({
   gameState,
   onExit,
@@ -812,17 +787,15 @@ function ExpertHud({
   );
 }
 
-function OfflineGameOver({
+function GameOver({
   status,
   role,
   onReplay,
-  onNewMatch,
   onExit,
 }: {
   status: "won" | "lost";
   role: PlayerRole;
   onReplay: () => void;
-  onNewMatch: () => void;
   onExit: () => void;
 }) {
   const won = status === "won";
@@ -848,7 +821,7 @@ function OfflineGameOver({
         </p>
         {role === "expert" && (
           <p className="text-bone-dim/60 font-mono text-[10px] uppercase tracking-[0.2em] mb-6">
-            (Offline — your screen ends on the timer. Trust your Defuser's call.)
+            (Your screen ends on the timer — trust your Defuser's call.)
           </p>
         )}
 
@@ -860,16 +833,10 @@ function OfflineGameOver({
             <RotateCcw size={16} strokeWidth={2.5} /> Replay Same Seed
           </button>
           <button
-            onClick={onNewMatch}
-            className="px-6 py-3 border border-rib hover:border-steel-light text-bone-dim hover:text-bone font-mono uppercase tracking-[0.2em] text-xs transition-colors flex items-center justify-center gap-2"
-          >
-            <Bomb size={14} strokeWidth={2.5} /> New Match
-          </button>
-          <button
             onClick={onExit}
             className="px-6 py-3 border border-rib hover:border-steel-light text-bone-dim hover:text-bone font-mono uppercase tracking-[0.2em] text-xs transition-colors flex items-center justify-center gap-2"
           >
-            <Home size={14} strokeWidth={2.5} /> Exit
+            <Home size={14} strokeWidth={2.5} /> Back to Lobby
           </button>
         </div>
       </div>

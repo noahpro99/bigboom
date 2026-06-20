@@ -1473,3 +1473,74 @@ export const pressSimon = createServerFn({ method: "POST" })
       return { ok: true, correct: false, lost };
     }
   });
+
+/* ── Best-effort tracking for offline-first games ─────────────────────
+   The game itself runs entirely client-side from the seed (deterministic,
+   instant, works with no connection). These two endpoints let the client
+   OPTIMISTICALLY mirror a game's lifecycle to the server when it happens
+   to be online — a lobby when it's armed, and the result when it ends.
+   Because everything is seed-derived, (seed, config, result) is a COMPLETE
+   record: the server can regenerate the whole bomb from it. Both are
+   INSERT OR IGNORE / idempotent, and the client fires them fire-and-forget
+   (see src/lib/sync.ts) so a failure or being offline never affects play. */
+export const trackLobby = createServerFn({ method: "POST" })
+  .validator(
+    (data: {
+      gameId: string;
+      seed: number;
+      serial: string;
+      preset: Preset;
+      timerSeconds: number;
+      moduleSet: string;
+    }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    db.run(
+      `INSERT OR IGNORE INTO games
+        (id, seed, serial_number, status, timer_seconds, preset, module_set)
+       VALUES (?, ?, ?, 'active', ?, ?, ?)`,
+      [
+        data.gameId,
+        data.seed,
+        data.serial,
+        Math.max(60, Math.min(1800, Math.floor(data.timerSeconds || 300))),
+        data.preset,
+        data.moduleSet,
+      ]
+    );
+    return { ok: true as const };
+  });
+
+export const trackResult = createServerFn({ method: "POST" })
+  .validator(
+    (data: {
+      gameId: string;
+      preset: Preset;
+      timerSeconds: number;
+      moduleSet: string;
+      status: "won" | "lost";
+      durationMs: number | null;
+    }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    db.run(
+      `INSERT OR IGNORE INTO game_results
+        (game_id, preset, timer_seconds, module_set, status, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        data.gameId,
+        data.preset,
+        data.timerSeconds,
+        data.moduleSet,
+        data.status,
+        data.durationMs,
+      ]
+    );
+    db.run("UPDATE games SET status = ? WHERE id = ? AND status = 'active'", [
+      data.status,
+      data.gameId,
+    ]);
+    return { ok: true as const };
+  });

@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { createGame } from "../server/game";
-import { getSessionId } from "../lib/session";
-import { play, preloadAll, playMusic, stopMusic } from "../lib/sound";
+import { play, preloadAll, playMusic } from "../lib/sound";
 import { decodeMatch } from "../lib/offlineCode";
 import { ProfileButton } from "../components/ProfileButton";
-import { Bomb, ArrowRight, Link2, AlertTriangle, WifiOff } from "lucide-react";
+import { Bomb, ArrowRight, Link2, AlertTriangle } from "lucide-react";
 import { DiscordIcon } from "../components/icons/Discord";
 
 export const Route = createFileRoute("/")({
@@ -32,7 +30,6 @@ function HomePage() {
   const navigate = useNavigate();
   const [pasteInput, setPasteInput] = useState("");
   const [pasteError, setPasteError] = useState("");
-  const [loading, setLoading] = useState(false);
 
   // First user interaction unlocks audio on Safari/Chrome — preload SFX and
   // kick off the menu music then. Browsers won't autoplay before a gesture.
@@ -48,29 +45,18 @@ function HomePage() {
 
   async function handleCreate() {
     play("menuButton");
-    setLoading(true);
-    try {
-      const result = await createGame({
-        data: { sessionId: getSessionId() },
-      });
-      await navigate({
-        to: "/game/$gameId",
-        params: { gameId: result.gameId },
-      });
-    } finally {
-      setLoading(false);
-    }
+    await navigate({ to: "/lobby" });
   }
 
   async function joinFromText(text: string) {
-    // An offline match code (or a /offline?join= link) routes to the
-    // serverless offline flow.
+    // A match code (or a /lobby?join= link) opens the lobby on that bomb.
     if (decodeMatch(text)) {
       setPasteError("");
       play("menuButton");
-      await navigate({ to: "/offline", search: { join: text.trim() } });
+      await navigate({ to: "/lobby", search: { join: text.trim() } });
       return;
     }
+    // Back-compat: a bare 6-char room code still opens the legacy room.
     const gameId = parseInviteLink(text);
     if (!gameId) {
       setPasteError("Couldn't read a game from that link");
@@ -147,15 +133,15 @@ function HomePage() {
 
           {/* Actions */}
           <div className="w-full max-w-md flex flex-col gap-3 reveal" style={{ animationDelay: "180ms" }}>
-            {/* Create */}
+            {/* Enter the lobby — build/share a bomb and play. Runs offline
+                instantly; tracks online when it can. */}
             <button
               onClick={handleCreate}
-              disabled={loading}
-              className="group relative overflow-hidden bg-amber text-void hover:bg-amber-glow disabled:bg-steel disabled:text-bone-dim transition-colors font-stencil text-2xl tracking-wider uppercase px-6 py-5 flex items-center justify-between"
+              className="group relative overflow-hidden bg-amber text-void hover:bg-amber-glow transition-colors font-stencil text-2xl tracking-wider uppercase px-6 py-5 flex items-center justify-between"
             >
               <span className="flex items-center gap-3">
                 <Bomb size={28} strokeWidth={2.5} />
-                <span>{loading ? "Arming…" : "Arm a Bomb"}</span>
+                <span>Arm a Bomb</span>
               </span>
               <ArrowRight
                 size={22}
@@ -164,26 +150,6 @@ function HomePage() {
               />
               {/* Bottom danger stripe */}
               <div className="absolute bottom-0 left-0 right-0 h-1 tx-stripes" />
-            </button>
-
-            {/* Play offline — serverless, QR-shared seed, two devices in
-                the same room with no internet. */}
-            <button
-              onClick={() => {
-                play("menuButton");
-                navigate({ to: "/offline" });
-              }}
-              className="group relative overflow-hidden border border-phosphor/45 hover:border-phosphor bg-phosphor/8 hover:bg-phosphor/14 text-phosphor transition-colors font-stencil text-xl tracking-wider uppercase px-6 py-4 flex items-center justify-between"
-            >
-              <span className="flex items-center gap-3">
-                <WifiOff size={24} strokeWidth={2.5} />
-                <span>Play Offline</span>
-              </span>
-              <ArrowRight
-                size={20}
-                strokeWidth={2.5}
-                className="transition-transform group-hover:translate-x-1"
-              />
             </button>
 
             {/* Discord */}

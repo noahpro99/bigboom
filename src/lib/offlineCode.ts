@@ -142,5 +142,5 @@ function extractCodeFromUrl(text: string): string | null {
    join flow; the in-app scanner also reads the embedded code while fully
    offline. */
 export function inviteUrl(origin: string, match: OfflineMatch): string {
-  return `${origin}/offline?join=${encodeMatch(match)}`;
+  return `${origin}/lobby?join=${encodeMatch(match)}`;
 }
