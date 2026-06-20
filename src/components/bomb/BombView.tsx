@@ -41,37 +41,45 @@ import type {
   ModuleState,
   MazeModuleConfig,
   MemoryModuleConfig,
+  Direction,
 } from "../../lib/types";
 import { Skull, Wifi, Activity } from "lucide-react";
 
-interface BombViewProps {
-  gameState: GameState;
-  /* True for spectators — they see the bomb but every interactive
-     control is gated through `disabled`. */
-  readOnly?: boolean;
+/* The full set of defuser actions BombView wires to the module controls.
+   Online play backs these with TanStack Start server mutations (see
+   useServerBombActions); offline play injects engine-backed handlers that
+   mutate local state synchronously. Either way BombView's rendering — and
+   every child module — is identical. */
+export interface BombActions {
+  onCut(moduleId: string, slotIndex: number): void;
+  onTap(moduleId: string): void;
+  onHoldStart(moduleId: string): void;
+  onHoldRelease(moduleId: string, releasedAt: number): void;
+  onPressSymbol(moduleId: string, symbolId: string): void;
+  onPressSimon(moduleId: string, color: string): void;
+  onMoveMaze(moduleId: string, direction: Direction): void;
+  onPressMemory(moduleId: string, position: number): void;
+  onDialMorse(moduleId: string, freqIndex: number): void;
+  onTransmitMorse(moduleId: string): void;
+  onCyclePassword(moduleId: string, col: number, delta: number): void;
+  onSubmitPassword(moduleId: string): void;
+  onCutCompWire(moduleId: string, slotIndex: number): void;
+  onPressWhoFirst(moduleId: string, word: string): void;
+  onCutWireSeq(moduleId: string, slotIndex: number): void;
 }
 
-export function BombView({ gameState, readOnly = false }: BombViewProps) {
+/* Online action set: server mutations + optimistic cache patches so the
+   bomb reacts the instant a control is used rather than waiting for the
+   round-trip. This is the original BombView behaviour, lifted into a hook
+   so offline play can swap in its own implementation. */
+function useServerBombActions(gameState: GameState): BombActions {
   const qc = useQueryClient();
   const { game, modules } = gameState;
   const sessionId = getSessionId();
-  /* The exact key TanStack Query uses for the game-state poll. We
-     read/write this cache directly for optimistic updates so the bomb
-     reacts the instant a button is pressed instead of waiting for the
-     server round-trip. */
   const gameQueryKey = ["game", game.id, sessionId];
-  const timeRemaining = useDisplayTime(
-    game.startedAt,
-    game.timerSeconds,
-    gameState.timeRemaining,
-    game.status
-  );
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ["game", game.id] });
 
-  /* Apply an immediate patch to one module's state inside the cached
-     game payload. Used by every action's onMutate so the visible
-     change lands the moment the user clicks. */
   function patchModuleState(
     moduleId: string,
     updater: (s: ModuleState, mod: Module) => ModuleState
@@ -87,18 +95,11 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     return previous;
   }
 
-  // Fire the wrong-buzzer whenever a defuser action was scored incorrect.
-  // The server returns { correct: boolean } on every scoring mutation; if it's
-  // false we play the buzzer in addition to invalidating the query.
   const onActionResult = (result: { correct?: boolean } | void) => {
     if (result && result.correct === false) play("wrongBuzzer");
     invalidate();
   };
 
-  /* Generic shape of every action's onMutate context: the cached game
-     state before we touched it, so onError can roll back if the server
-     rejects. We cancel the in-flight refetch first so a pending poll
-     can't overwrite the optimistic patch. */
   type Ctx = { previous: GameState | null };
   async function snapshotAndCancel(): Promise<Ctx> {
     await qc.cancelQueries({ queryKey: gameQueryKey });
@@ -108,10 +109,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     if (ctx?.previous) qc.setQueryData(gameQueryKey, ctx.previous);
   }
 
-  /* WIRE — the slot is added to cutWires immediately so the wire dims
-     before the server scoring round-trip. If it's wrong the server
-     responds correct=false (we play the buzzer); the cutWires entry
-     stays either way because the server records it on both branches. */
   const cutMut = useMutation({
     mutationFn: cutWire,
     onMutate: async (vars) => {
@@ -125,11 +122,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
-  /* BUTTON — tap can't be predicted client-side (it's a server-side
-     check against the rule list), so no optimistic state change. */
   const tapMut = useMutation({ mutationFn: tapButton, onSuccess: onActionResult });
-  /* BUTTON HOLD — set isHolding immediately so the LED strip appears
-     under the cap on press. */
   const startMut = useMutation({
     mutationFn: startHold,
     onMutate: async (vars) => {
@@ -150,10 +143,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
-  /* SYMBOL — assume the press is correct and add the id to pressedIds.
-     If the server says correct=false, onActionResult plays the buzzer
-     and the subsequent invalidate refetches the real state (which on
-     wrong press is pressedIds=[] — the optimistic entry vanishes). */
   const pressMut = useMutation({
     mutationFn: pressSymbol,
     onMutate: async (vars) => {
@@ -167,8 +156,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
-  /* SIMON — assume correct: increment the counter so the next pip
-     lights immediately. */
   const simonMut = useMutation({
     mutationFn: pressSimon,
     onMutate: async (vars) => {
@@ -182,10 +169,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
-  /* MAZE — we can compute the move's legality locally (the maze config
-     is on the client), so only apply the optimistic move if it would
-     actually be allowed. Skip the patch on wall collisions; the server
-     still validates and applies the strike. */
   const mazeMut = useMutation({
     mutationFn: moveMaze,
     onMutate: async (vars) => {
@@ -209,9 +192,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
-  /* MEMORY — assume correct: append a synthetic press to history so
-     the stage pip lights and the bomb advances. Server rolls back on
-     wrong. */
   const memoryMut = useMutation({
     mutationFn: pressMemory,
     onMutate: async (vars) => {
@@ -237,8 +217,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
-  /* MORSE DIAL — pure state setter. No correctness check, so the
-     optimistic update is always right. */
   const morseDialMut = useMutation({
     mutationFn: dialMorse,
     onMutate: async (vars) => {
@@ -256,7 +234,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     mutationFn: transmitMorse,
     onSuccess: onActionResult,
   });
-  /* PASSWORD DIAL — also a pure state setter. */
   const pwCycleMut = useMutation({
     mutationFn: cyclePassword,
     onMutate: async (vars) => {
@@ -279,9 +256,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     mutationFn: submitPassword,
     onSuccess: onActionResult,
   });
-  /* COMPLICATED WIRES — like the basic Wire module, record the cut
-     immediately so the wire fades. Whether it was correct comes back
-     from the server. */
   const compCutMut = useMutation({
     mutationFn: cutCompWire,
     onMutate: async (vars) => {
@@ -295,9 +269,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
-  /* WHO'S ON FIRST — optimistically advance the stage on press; the
-     server rolls back if the press was wrong (stage resets to 0,
-     server says correct=false → buzzer + refetch). */
   const whoMut = useMutation({
     mutationFn: pressWhoFirst,
     onMutate: async (vars) => {
@@ -311,8 +282,6 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
-  /* WIRE SEQUENCES — same shape as Complicated Wires: optimistically
-     mark the slot cut so the wire fades immediately. */
   const wireSeqCutMut = useMutation({
     mutationFn: cutWireSeq,
     onMutate: async (vars) => {
@@ -326,6 +295,62 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
     onError: (_e, _v, ctx) => rollback(ctx as Ctx),
     onSuccess: onActionResult,
   });
+
+  return {
+    onCut: (moduleId, slotIndex) =>
+      cutMut.mutate({ data: { gameId: game.id, moduleId, slotIndex } }),
+    onTap: (moduleId) => tapMut.mutate({ data: { gameId: game.id, moduleId } }),
+    onHoldStart: (moduleId) => startMut.mutate({ data: { moduleId } }),
+    onHoldRelease: (moduleId, releasedAt) =>
+      releaseMut.mutate({ data: { gameId: game.id, moduleId, releasedAt } }),
+    onPressSymbol: (moduleId, symbolId) =>
+      pressMut.mutate({ data: { gameId: game.id, moduleId, symbolId } }),
+    onPressSimon: (moduleId, color) =>
+      simonMut.mutate({ data: { gameId: game.id, moduleId, color } }),
+    onMoveMaze: (moduleId, direction) =>
+      mazeMut.mutate({ data: { gameId: game.id, moduleId, direction } }),
+    onPressMemory: (moduleId, position) =>
+      memoryMut.mutate({ data: { gameId: game.id, moduleId, position } }),
+    onDialMorse: (moduleId, freqIndex) =>
+      morseDialMut.mutate({ data: { moduleId, freqIndex } }),
+    onTransmitMorse: (moduleId) =>
+      morseTxMut.mutate({ data: { gameId: game.id, moduleId } }),
+    onCyclePassword: (moduleId, col, delta) =>
+      pwCycleMut.mutate({ data: { moduleId, col, delta } }),
+    onSubmitPassword: (moduleId) =>
+      pwSubmitMut.mutate({ data: { gameId: game.id, moduleId } }),
+    onCutCompWire: (moduleId, slotIndex) =>
+      compCutMut.mutate({ data: { gameId: game.id, moduleId, slotIndex } }),
+    onPressWhoFirst: (moduleId, word) =>
+      whoMut.mutate({ data: { gameId: game.id, moduleId, word } }),
+    onCutWireSeq: (moduleId, slotIndex) =>
+      wireSeqCutMut.mutate({ data: { gameId: game.id, moduleId, slotIndex } }),
+  };
+}
+
+interface BombViewProps {
+  gameState: GameState;
+  /* True for spectators — they see the bomb but every interactive
+     control is gated through `disabled`. */
+  readOnly?: boolean;
+  /* Offline play injects engine-backed actions here. When omitted, the
+     online server mutations are used. */
+  actions?: BombActions;
+}
+
+export function BombView({ gameState, readOnly = false, actions }: BombViewProps) {
+  const { game, modules } = gameState;
+  const timeRemaining = useDisplayTime(
+    game.startedAt,
+    game.timerSeconds,
+    gameState.timeRemaining,
+    game.status
+  );
+
+  /* The hook is always called (Rules of Hooks); for offline play its
+     mutations simply go unused because `actions` is supplied. */
+  const serverActions = useServerBombActions(gameState);
+  const act = actions ?? serverActions;
 
   /* Spectators see everything but can't interact — fold into the same
      `disabled` gate every module already checks. */
@@ -422,11 +447,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onCut={(slotIndex) =>
-                      cutMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id, slotIndex },
-                      })
-                    }
+                    onCut={(slotIndex) => act.onCut(mod.id, slotIndex)}
                   />
                 );
               }
@@ -436,27 +457,14 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onTap={() =>
-                      tapMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id },
-                      })
-                    }
-                    onHoldStart={() =>
-                      startMut.mutate({ data: { moduleId: mod.id } })
-                    }
+                    onTap={() => act.onTap(mod.id)}
+                    onHoldStart={() => act.onHoldStart(mod.id)}
                     onHoldRelease={() => {
                       /* Send the exact integer the client was showing
-                         at the moment of release — the server applies
-                         the timing rule against THAT value. No
-                         server-side clock comparison, no off-by-one
-                         from network/poll latency. */
-                      releaseMut.mutate({
-                        data: {
-                          gameId: game.id,
-                          moduleId: mod.id,
-                          releasedAt: timeRemaining,
-                        },
-                      });
+                         at the moment of release — the timing rule is
+                         applied against THAT value. No clock comparison,
+                         no off-by-one from network/poll latency. */
+                      act.onHoldRelease(mod.id, timeRemaining);
                     }}
                   />
                 );
@@ -467,11 +475,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onPress={(symbolId) =>
-                      pressMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id, symbolId },
-                      })
-                    }
+                    onPress={(symbolId) => act.onPressSymbol(mod.id, symbolId)}
                   />
                 );
               }
@@ -481,11 +485,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onPress={(color) =>
-                      simonMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id, color },
-                      })
-                    }
+                    onPress={(color) => act.onPressSimon(mod.id, color)}
                   />
                 );
               }
@@ -495,11 +495,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onMove={(direction) =>
-                      mazeMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id, direction },
-                      })
-                    }
+                    onMove={(direction) => act.onMoveMaze(mod.id, direction)}
                   />
                 );
               }
@@ -509,11 +505,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onPress={(position) =>
-                      memoryMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id, position },
-                      })
-                    }
+                    onPress={(position) => act.onPressMemory(mod.id, position)}
                   />
                 );
               }
@@ -527,16 +519,8 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                        they can't dial or transmit. Game must still be
                        live (not won/lost/waiting). */
                     canListen={game.status === "active"}
-                    onDial={(freqIndex) =>
-                      morseDialMut.mutate({
-                        data: { moduleId: mod.id, freqIndex },
-                      })
-                    }
-                    onTransmit={() =>
-                      morseTxMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id },
-                      })
-                    }
+                    onDial={(freqIndex) => act.onDialMorse(mod.id, freqIndex)}
+                    onTransmit={() => act.onTransmitMorse(mod.id)}
                   />
                 );
               }
@@ -546,16 +530,8 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onCycle={(col, delta) =>
-                      pwCycleMut.mutate({
-                        data: { moduleId: mod.id, col, delta },
-                      })
-                    }
-                    onSubmit={() =>
-                      pwSubmitMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id },
-                      })
-                    }
+                    onCycle={(col, delta) => act.onCyclePassword(mod.id, col, delta)}
+                    onSubmit={() => act.onSubmitPassword(mod.id)}
                   />
                 );
               }
@@ -565,11 +541,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onCut={(slotIndex) =>
-                      compCutMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id, slotIndex },
-                      })
-                    }
+                    onCut={(slotIndex) => act.onCutCompWire(mod.id, slotIndex)}
                   />
                 );
               }
@@ -579,11 +551,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onPress={(word) =>
-                      whoMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id, word },
-                      })
-                    }
+                    onPress={(word) => act.onPressWhoFirst(mod.id, word)}
                   />
                 );
               }
@@ -593,11 +561,7 @@ export function BombView({ gameState, readOnly = false }: BombViewProps) {
                     key={mod.id}
                     module={mod}
                     disabled={disabled}
-                    onCut={(slotIndex) =>
-                      wireSeqCutMut.mutate({
-                        data: { gameId: game.id, moduleId: mod.id, slotIndex },
-                      })
-                    }
+                    onCut={(slotIndex) => act.onCutWireSeq(mod.id, slotIndex)}
                   />
                 );
               }
