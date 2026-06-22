@@ -54,6 +54,7 @@ import {
   Copy,
   AlertTriangle,
   Share2,
+  QrCode as QrCodeIcon,
   ScanLine,
   RotateCcw,
   ShieldCheck,
@@ -407,7 +408,7 @@ function LobbyScreen({
     }
   }
 
-  async function nativeShare() {
+  async function shareLink() {
     play("menuButton");
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
@@ -418,10 +419,10 @@ function LobbyScreen({
         });
         return;
       } catch {
-        /* cancelled or unsupported — fall back to the panel */
+        /* cancelled or unsupported — fall back to copying */
       }
     }
-    setShareOpen((v) => !v);
+    copyCode();
   }
 
   return (
@@ -435,10 +436,19 @@ function LobbyScreen({
       <div className="p-5 border-b border-rib/60 space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <button
-            onClick={nativeShare}
-            className="px-3 py-3 border border-amber/50 hover:border-amber bg-amber/8 hover:bg-amber/12 text-amber transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2"
+            onClick={() => {
+              play("menuButton");
+              setShareOpen((v) => !v);
+              setScanOpen(false);
+            }}
+            aria-pressed={shareOpen}
+            className={`px-3 py-3 border transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2 ${
+              shareOpen
+                ? "border-amber bg-amber/14 text-amber"
+                : "border-amber/50 hover:border-amber bg-amber/8 hover:bg-amber/12 text-amber"
+            }`}
           >
-            <Share2 size={18} strokeWidth={2.5} /> Share
+            <QrCodeIcon size={18} strokeWidth={2.5} /> QR Code
           </button>
           <button
             onClick={() => {
@@ -446,7 +456,12 @@ function LobbyScreen({
               setScanOpen((v) => !v);
               setShareOpen(false);
             }}
-            className="px-3 py-3 border border-cyan-rad/50 hover:border-cyan-rad bg-cyan-rad/8 hover:bg-cyan-rad/12 text-cyan-rad transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2"
+            aria-pressed={scanOpen}
+            className={`px-3 py-3 border transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2 ${
+              scanOpen
+                ? "border-cyan-rad bg-cyan-rad/14 text-cyan-rad"
+                : "border-cyan-rad/50 hover:border-cyan-rad bg-cyan-rad/8 hover:bg-cyan-rad/12 text-cyan-rad"
+            }`}
           >
             <ScanLine size={18} strokeWidth={2.5} /> Join
           </button>
@@ -467,6 +482,12 @@ function LobbyScreen({
                 {copied ? "Copied" : "Copy"}
               </button>
             </div>
+            <button
+              onClick={shareLink}
+              className="w-full px-3 py-2 border border-rib hover:border-steel-light text-bone-dim hover:text-bone transition-colors flex items-center justify-center gap-2 font-mono text-xs uppercase tracking-[0.2em]"
+            >
+              <Share2 size={14} /> Share link
+            </button>
             <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-bone-dim/55 text-center">
               Partner taps Join and scans this — or types the code. Works offline.
             </p>
