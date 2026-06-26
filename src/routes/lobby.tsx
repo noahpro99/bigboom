@@ -6,9 +6,7 @@ import { SoundLayer } from "../components/SoundLayer";
 import { ProfileButton } from "../components/ProfileButton";
 import { ConfigSection } from "../components/lobby/ConfigSection";
 import { QrCode } from "../components/offline/QrCode";
-import { QrScanner } from "../components/offline/QrScanner";
 import { play, preloadAll, playMusic, setInGame } from "../lib/sound";
-import { useDisplayTime } from "../lib/useDisplayTime";
 import {
   createOfflineGame,
   applyCutWire,
@@ -27,6 +25,7 @@ import {
   applyPressWhoFirst,
   applyCutWireSeq,
   applyTimeout,
+  applyGiveUp,
 } from "../lib/offlineEngine";
 import {
   type OfflineMatch,
@@ -38,6 +37,8 @@ import {
   randomSeed,
 } from "../lib/offlineCode";
 import { newRoomId, reportLobby, reportResult } from "../lib/sync";
+import { getSessionId } from "../lib/session";
+import { useLobbySocket, type LobbyPlayer } from "../lib/useLobbySocket";
 import {
   PRESET_CONFIGS,
   type GameState,
@@ -53,20 +54,19 @@ import {
   Check,
   Copy,
   AlertTriangle,
-  Share2,
+  Link2,
   QrCode as QrCodeIcon,
-  ScanLine,
   RotateCcw,
   ShieldCheck,
   Skull,
   Dice5,
-  LogOut,
   X,
 } from "lucide-react";
 
 export const Route = createFileRoute("/lobby")({
-  validateSearch: (search: Record<string, unknown>): { join?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { join?: string; room?: string } => ({
     join: typeof search.join === "string" ? search.join : undefined,
+    room: typeof search.room === "string" ? search.room : undefined,
   }),
   component: LobbyPage,
 });
@@ -105,11 +105,16 @@ function saveGame(s: SavedGame | null) {
 
 function LobbyPage() {
   const navigate = useNavigate();
-  const { join } = Route.useSearch();
+  const { join, room: roomFromUrl } = Route.useSearch();
 
   const [phase, setPhase] = useState<"lobby" | "play">("lobby");
-  const [match, setMatch] = useState<OfflineMatch | null>(null);
-  const [role, setRole] = useState<PlayerRole>("defuser");
+  // Decode the join URL param synchronously so joinedFromLink is true on the
+  // very first render — if we wait for a useEffect, LobbyScreen's useState
+  // initializer has already captured the wrong (false) joined value.
+  const [match, setMatch] = useState<OfflineMatch | null>(() =>
+    join ? decodeMatch(join) : null
+  );
+  const [role, setRole] = useState<PlayerRole>(join ? "expert" : "defuser");
   const [gameId, setGameId] = useState<string>("");
   const [game, setGame] = useState<GameState | null>(null);
 
@@ -124,23 +129,16 @@ function LobbyPage() {
     return () => window.removeEventListener("pointerdown", once);
   }, []);
 
-  // On first mount: resume an in-progress game, or honour a ?join= deep link.
+  // On first mount: if there's a saved in-progress game, jump straight to it.
+  // The join-URL case is already handled above via lazy useState.
   useEffect(() => {
     const saved = loadSaved();
-    if (saved && saved.gameState.game.status === "active") {
+    if (saved?.gameState?.game) {
       setMatch(saved.match);
       setRole(saved.role);
       setGameId(saved.gameId);
       setGame(saved.gameState);
       setPhase("play");
-      return;
-    }
-    if (join) {
-      const decoded = decodeMatch(join);
-      if (decoded) {
-        setMatch(decoded);
-        setRole("expert");
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -221,13 +219,14 @@ function LobbyPage() {
             <span className="text-4xl text-crimson">BOOM</span>
           </h1>
           <p className="text-bone-dim font-mono text-[10px] uppercase tracking-[0.3em] mt-2">
-            Two players · One survives
+            Two players · One bomb
           </p>
         </div>
 
         <LobbyScreen
           initialMatch={match}
           joinedFromLink={!!join && !!match}
+          roomFromUrl={roomFromUrl}
           onStart={startMatch}
         />
       </div>
@@ -319,10 +318,12 @@ function RolePicker({
 function LobbyScreen({
   initialMatch,
   joinedFromLink,
+  roomFromUrl,
   onStart,
 }: {
   initialMatch: OfflineMatch | null;
   joinedFromLink: boolean;
+  roomFromUrl?: string;
   onStart: (m: OfflineMatch, r: PlayerRole) => void;
 }) {
   const base = PRESET_CONFIGS.standard;
@@ -339,10 +340,38 @@ function LobbyScreen({
   const [role, setRole] = useState<PlayerRole>(joinedFromLink ? "expert" : "defuser");
 
   const [shareOpen, setShareOpen] = useState(false);
-  const [scanOpen, setScanOpen] = useState(false);
-  const [codeText, setCodeText] = useState("");
-  const [codeError, setCodeError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
+
+  // Stable room ID for pre-game presence. Host generates one; joiner gets
+  const [roomId] = useState<string>(() => roomFromUrl ?? newRoomId());
+  const sessionId = typeof window !== "undefined" ? getSessionId() : "";
+
+  // WS-based presence — only shown when connected.
+  const [presencePlayers, setPresencePlayers] = useState<LobbyPlayer[]>([]);
+
+  // Keep a ref to current config so callbacks always send the latest values.
+  const configRef = useRef({ seed, timerSeconds, moduleTypes });
+  useEffect(() => { configRef.current = { seed, timerSeconds, moduleTypes }; });
+
+  const { connected, sendConfig } = useLobbySocket({
+    roomId,
+    sessionId,
+    role,
+    onPlayers: setPresencePlayers,
+    // Guest receives config from host via WS and auto-applies it.
+    onConfig: (cfg) => {
+      if (joined) applyMatch(normalizeMatch(cfg));
+    },
+  });
+
+  // When the WS first connects, push the current config so the guest
+  // immediately sees the host's settings even if they joined mid-session.
+  const sendConfigFn = sendConfig;
+  useEffect(() => {
+    if (connected && !joined) sendConfigFn(configRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
 
   const match = useMemo(
     () => normalizeMatch({ seed, timerSeconds, moduleTypes }),
@@ -351,7 +380,8 @@ function LobbyScreen({
   const code = encodeMatch(match);
   const origin =
     typeof window !== "undefined" ? window.location.origin : "https://bigboom.app";
-  const url = inviteUrl(origin, match);
+  const url = inviteUrl(origin, match, roomId);
+
 
   function applyMatch(m: OfflineMatch) {
     setSeed(m.seed);
@@ -360,41 +390,35 @@ function LobbyScreen({
     setModuleTypes(m.moduleTypes);
   }
 
-  function adoptCode(raw: string) {
-    const decoded = decodeMatch(raw);
-    if (!decoded) {
-      setCodeError("That doesn't look like a match code.");
-      return;
-    }
-    setCodeError("");
-    applyMatch(decoded);
-    setJoined(true);
-    setRole("expert");
-    setScanOpen(false);
-    setShareOpen(false);
-    play("menuButton");
-  }
-
   function onConfigChange(next: {
     preset?: Preset;
     timerSeconds?: number;
     moduleTypes?: ModuleType[];
   }) {
+    let newTimerSeconds = timerSeconds;
+    let newModuleTypes = moduleTypes;
+
     if (next.preset && next.preset !== "custom") {
       const cfg = PRESET_CONFIGS[next.preset];
       setPreset(cfg.preset);
       setTimerSeconds(cfg.timerSeconds);
       setModuleTypes([...cfg.moduleTypes]);
-      return;
+      newTimerSeconds = cfg.timerSeconds;
+      newModuleTypes = [...cfg.moduleTypes];
+    } else {
+      const m = matchFromConfig(seed, {
+        preset: "custom",
+        timerSeconds: next.timerSeconds ?? timerSeconds,
+        moduleTypes: next.moduleTypes ?? moduleTypes,
+      });
+      setPreset(m.preset);
+      setTimerSeconds(m.timerSeconds);
+      setModuleTypes(m.moduleTypes);
+      newTimerSeconds = m.timerSeconds;
+      newModuleTypes = m.moduleTypes;
     }
-    const m = matchFromConfig(seed, {
-      preset: "custom",
-      timerSeconds: next.timerSeconds ?? timerSeconds,
-      moduleTypes: next.moduleTypes ?? moduleTypes,
-    });
-    setPreset(m.preset);
-    setTimerSeconds(m.timerSeconds);
-    setModuleTypes(m.moduleTypes);
+
+    if (!joined) sendConfig({ seed, timerSeconds: newTimerSeconds, moduleTypes: newModuleTypes });
   }
 
   async function copyCode() {
@@ -425,21 +449,34 @@ function LobbyScreen({
     copyCode();
   }
 
+  async function copyUrl() {
+    try {
+      await navigator.clipboard.writeText(url);
+      play("menuButton");
+      setCopiedUrl(true);
+      setTimeout(() => setCopiedUrl(false), 1500);
+    } catch {
+      /* clipboard blocked */
+    }
+  }
+
   return (
     <div className="w-full max-w-lg bg-chassis/70 border border-rib backdrop-blur-sm reveal">
       <div className="flex items-center justify-between px-4 py-2 bg-rib/60 border-b border-rib text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
         <span>{joined ? "Joined a match" : "Build the bomb"}</span>
-        <span>Voice / in-person required</span>
+        <span className={`flex items-center gap-1.5 ${connected ? "text-phosphor" : "text-bone-dim/40"}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-phosphor animate-pulse" : "bg-bone-dim/30"}`} />
+          {connected ? "LIVE" : "OFFLINE"}
+        </span>
       </div>
 
-      {/* Share + Join actions */}
+      {/* Share + Copy actions */}
       <div className="p-5 border-b border-rib/60 space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => {
               play("menuButton");
               setShareOpen((v) => !v);
-              setScanOpen(false);
             }}
             aria-pressed={shareOpen}
             className={`px-3 py-3 border transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2 ${
@@ -451,19 +488,11 @@ function LobbyScreen({
             <QrCodeIcon size={18} strokeWidth={2.5} /> QR Code
           </button>
           <button
-            onClick={() => {
-              play("menuButton");
-              setScanOpen((v) => !v);
-              setShareOpen(false);
-            }}
-            aria-pressed={scanOpen}
-            className={`px-3 py-3 border transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2 ${
-              scanOpen
-                ? "border-cyan-rad bg-cyan-rad/14 text-cyan-rad"
-                : "border-cyan-rad/50 hover:border-cyan-rad bg-cyan-rad/8 hover:bg-cyan-rad/12 text-cyan-rad"
-            }`}
+            onClick={copyUrl}
+            className="px-3 py-3 border transition-colors font-stencil text-base uppercase tracking-[0.18em] flex items-center justify-center gap-2 border-cyan-rad/50 hover:border-cyan-rad bg-cyan-rad/8 hover:bg-cyan-rad/12 text-cyan-rad"
           >
-            <ScanLine size={18} strokeWidth={2.5} /> Join
+            {copiedUrl ? <Check size={18} strokeWidth={2.5} className="text-phosphor" /> : <Link2 size={18} strokeWidth={2.5} />}
+            {copiedUrl ? "Copied!" : "Copy link"}
           </button>
         </div>
 
@@ -483,10 +512,11 @@ function LobbyScreen({
               </button>
             </div>
             <button
-              onClick={shareLink}
+              onClick={copyUrl}
               className="w-full px-3 py-2 border border-rib hover:border-steel-light text-bone-dim hover:text-bone transition-colors flex items-center justify-center gap-2 font-mono text-xs uppercase tracking-[0.2em]"
             >
-              <Share2 size={14} /> Share link
+              {copiedUrl ? <Check size={14} className="text-phosphor" /> : <Link2 size={14} />}
+              {copiedUrl ? "Copied!" : "Copy link"}
             </button>
             <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-bone-dim/55 text-center">
               Partner taps Join and scans this — or types the code. Works offline.
@@ -494,47 +524,33 @@ function LobbyScreen({
           </div>
         )}
 
-        {scanOpen && (
-          <div className="border border-rib bg-void/40 p-4 space-y-3">
-            <QrScanner
-              onClose={() => setScanOpen(false)}
-              onResult={(value) => {
-                setCodeText(value);
-                adoptCode(value);
-              }}
-            />
-            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim/50">
-              <div className="h-px flex-1 bg-rib" /> or type it <div className="h-px flex-1 bg-rib" />
-            </div>
-            <div className="flex gap-2">
-              <input
-                value={codeText}
-                onChange={(e) => {
-                  setCodeText(e.target.value);
-                  setCodeError("");
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") adoptCode(codeText);
-                }}
-                placeholder="bb1.xxxx.xx.00000000000"
-                className="flex-1 min-w-0 bg-void/60 border border-rib focus:border-cyan-rad/60 px-3 py-2.5 text-bone font-mono text-sm placeholder:text-steel-light focus:outline-none transition-colors"
-                aria-label="Match code"
-              />
-              <button
-                onClick={() => adoptCode(codeText)}
-                className="px-3 border border-cyan-rad/50 hover:border-cyan-rad text-cyan-rad font-mono text-xs uppercase tracking-[0.2em]"
-              >
-                Load
-              </button>
-            </div>
-            {codeError && (
-              <p className="text-crimson text-xs font-mono flex items-center gap-1.5">
-                <AlertTriangle size={11} /> {codeError}
-              </p>
+      </div>
+
+      {/* Players — only rendered when WS is connected */}
+      {connected && presencePlayers.length > 0 && (
+        <div className="px-5 py-3 border-b border-rib/60">
+          <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim mb-2">
+            Agents in room
+          </div>
+          <div className="flex flex-col gap-1">
+            {presencePlayers.map((p, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs font-mono">
+                <span className={`w-1.5 h-1.5 rounded-full ${p.role === "defuser" ? "bg-amber" : "bg-cyan-rad"}`} />
+                <span className={p.isMe ? "text-bone" : "text-bone-dim"}>
+                  {p.role === "defuser" ? "Defuser" : "Expert"}
+                  {p.isMe && <span className="ml-1.5 text-bone-dim/50 text-[9px] uppercase tracking-widest">you</span>}
+                </span>
+              </div>
+            ))}
+            {presencePlayers.length === 1 && (
+              <div className="flex items-center gap-2 text-xs font-mono text-bone-dim/40">
+                <span className="w-1.5 h-1.5 rounded-full border border-bone-dim/30" />
+                <span>Waiting for partner…</span>
+              </div>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {joined ? (
         /* Joined a partner's bomb — config is theirs. */
@@ -566,7 +582,9 @@ function LobbyScreen({
               <button
                 onClick={() => {
                   play("menuButton");
-                  setSeed(randomSeed());
+                  const s = randomSeed();
+                  setSeed(s);
+                  if (!joined) sendConfig({ seed: s, timerSeconds, moduleTypes });
                 }}
                 className="text-[10px] font-mono uppercase tracking-[0.2em] text-phosphor hover:text-phosphor/80 flex items-center gap-1"
               >
@@ -578,7 +596,9 @@ function LobbyScreen({
               value={seed}
               onChange={(e) => {
                 const n = parseInt(e.target.value.replace(/\D/g, ""), 10);
-                setSeed(Number.isFinite(n) ? n >>> 0 : 0);
+                const s = Number.isFinite(n) ? n >>> 0 : 0;
+                setSeed(s);
+                if (!joined) sendConfig({ seed: s, timerSeconds, moduleTypes });
               }}
               className="w-full bg-void/60 border border-rib focus:border-amber/60 px-3 py-2.5 text-bone font-mono text-sm focus:outline-none transition-colors"
               aria-label="Seed"
@@ -729,21 +749,9 @@ function PlayScreen({
       <SoundLayer gameState={gameState} />
 
       {role === "expert" ? (
-        <>
-          <ManualView seed={game.seed} moduleTypes={game.moduleTypes} />
-          <ExpertHud
-            gameState={gameState}
-            onExit={onExit}
-            onMarkDefused={() => {
-              const s = stateRef.current;
-              if (s.game.status !== "active") return;
-              play("menuButton");
-              setGameState({ ...s, game: { ...s.game, status: "won" } });
-            }}
-          />
-        </>
+        <ManualView seed={game.seed} moduleTypes={game.moduleTypes} onGiveUp={() => setGameState(applyGiveUp(stateRef.current))} />
       ) : (
-        <BombView gameState={gameState} actions={actions} readOnly={role === "spectator"} />
+        <BombView gameState={gameState} actions={actions} readOnly={role === "spectator"} onGiveUp={() => setGameState(applyGiveUp(stateRef.current))} />
       )}
 
       {isOver && (
@@ -758,55 +766,6 @@ function PlayScreen({
   );
 }
 
-/* Floating timer + controls overlaid on the Expert's manual so they feel
-   the clock without a full bomb chassis. */
-function ExpertHud({
-  gameState,
-  onExit,
-  onMarkDefused,
-}: {
-  gameState: GameState;
-  onExit: () => void;
-  onMarkDefused: () => void;
-}) {
-  const { game } = gameState;
-  const t = useDisplayTime(
-    game.startedAt,
-    game.timerSeconds,
-    gameState.timeRemaining,
-    game.status
-  );
-  const mm = Math.floor(Math.max(0, t) / 60);
-  const ss = String(Math.max(0, t) % 60).padStart(2, "0");
-  return (
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2">
-      <div
-        className={`font-mono tabular-nums text-lg px-3 py-1 border bg-void/80 backdrop-blur-sm ${
-          t <= 30 ? "border-crimson/60 text-crimson" : "border-rib text-phosphor"
-        }`}
-      >
-        {mm}:{ss}
-      </div>
-      {/* The Expert never touches the bomb, so their screen can't know
-          when the Defuser finishes. When the Defuser calls it, tap this
-          to log the win + stop the clock. */}
-      <button
-        onClick={onMarkDefused}
-        title="Defuser cleared the bomb"
-        className="border border-phosphor/50 bg-phosphor/10 backdrop-blur-sm px-2 py-1.5 text-phosphor hover:bg-phosphor/20 transition-colors flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em]"
-      >
-        <ShieldCheck size={15} /> Defused
-      </button>
-      <button
-        onClick={onExit}
-        aria-label="Leave match"
-        className="border border-rib bg-void/80 backdrop-blur-sm p-1.5 text-bone-dim hover:text-bone hover:border-bone-dim/40 transition-colors"
-      >
-        <LogOut size={16} />
-      </button>
-    </div>
-  );
-}
 
 function GameOver({
   status,

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { play, preloadAll, playMusic } from "../lib/sound";
-import { decodeMatch } from "../lib/offlineCode";
+import { decodeMatch, encodeMatch } from "../lib/offlineCode";
 import { ProfileButton } from "../components/ProfileButton";
-import { Bomb, ArrowRight, Link2, AlertTriangle } from "lucide-react";
+import { QrScanner } from "../components/offline/QrScanner";
+import { Bomb, ArrowRight, Link2, AlertTriangle, ScanLine } from "lucide-react";
 import { DiscordIcon } from "../components/icons/Discord";
 
 export const Route = createFileRoute("/")({
@@ -30,6 +31,7 @@ function HomePage() {
   const navigate = useNavigate();
   const [pasteInput, setPasteInput] = useState("");
   const [pasteError, setPasteError] = useState("");
+  const [scanOpen, setScanOpen] = useState(false);
 
   // First user interaction unlocks audio on Safari/Chrome — preload SFX and
   // kick off the menu music then. Browsers won't autoplay before a gesture.
@@ -50,10 +52,18 @@ function HomePage() {
 
   async function joinFromText(text: string) {
     // A match code (or a /lobby?join= link) opens the lobby on that bomb.
-    if (decodeMatch(text)) {
+    const decoded = decodeMatch(text.trim());
+    if (decoded) {
       setPasteError("");
       play("menuButton");
-      await navigate({ to: "/lobby", search: { join: text.trim() } });
+      // Forward the room= param so the guest lands in the host's WS room.
+      let room: string | undefined;
+      try {
+        const url = new URL(text.trim(), window.location.href);
+        room = url.searchParams.get("room") ?? undefined;
+      } catch {}
+      // Pass the clean encoded code, not the full URL string.
+      await navigate({ to: "/lobby", search: { join: encodeMatch(decoded), ...(room ? { room } : {}) } });
       return;
     }
     // Back-compat: a bare 6-char room code still opens the legacy room.
@@ -152,19 +162,33 @@ function HomePage() {
               <div className="absolute bottom-0 left-0 right-0 h-1 tx-stripes" />
             </button>
 
-            {/* Discord */}
-            <a
-              href={DISCORD_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="bg-[#5865F2] hover:bg-[#4752c4] text-bone transition-colors font-pmono text-sm font-semibold uppercase tracking-[0.2em] px-5 py-3.5 flex items-center justify-center gap-3"
+            {/* Scan QR */}
+            <button
+              onClick={() => { play("menuButton"); setScanOpen((v) => !v); }}
+              aria-pressed={scanOpen}
+              className={`px-5 py-3.5 border font-stencil text-xl uppercase tracking-[0.18em] flex items-center justify-center gap-3 transition-colors ${
+                scanOpen
+                  ? "border-cyan-rad bg-cyan-rad/14 text-cyan-rad"
+                  : "border-cyan-rad/50 hover:border-cyan-rad bg-cyan-rad/8 hover:bg-cyan-rad/12 text-cyan-rad"
+              }`}
             >
-              <DiscordIcon size={20} />
-              <span>Find Players on Discord</span>
-            </a>
+              <ScanLine size={22} strokeWidth={2.5} />
+              <span>Scan QR Code</span>
+            </button>
+
+            {scanOpen && (
+              <QrScanner
+                onClose={() => setScanOpen(false)}
+                onResult={(value) => {
+                  setScanOpen(false);
+                  setPasteInput(value);
+                  joinFromText(value);
+                }}
+              />
+            )}
 
             {/* Paste link */}
-            <div className="mt-6 border border-rib bg-chassis/60 backdrop-blur-sm">
+            <div className="mt-2 border border-rib bg-chassis/60 backdrop-blur-sm">
               <div className="border-b border-rib px-4 py-2 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-bone-dim">
                 <Link2 size={12} strokeWidth={2.5} />
                 <span>Incoming Transmission</span>
@@ -173,10 +197,17 @@ function HomePage() {
                 <input
                   value={pasteInput}
                   onChange={(e) => {
-                    setPasteInput(e.target.value);
+                    const v = e.target.value;
+                    setPasteInput(v);
                     setPasteError("");
+                    // Auto-join when a full URL or code is typed/pasted via onChange
+                    // (covers right-click paste, autofill, and drag-drop).
+                    if (decodeMatch(v.trim())) joinFromText(v.trim());
                   }}
                   onPaste={handlePaste}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && pasteInput.trim()) joinFromText(pasteInput.trim());
+                  }}
                   onFocus={() => play("menuButton")}
                   placeholder="Paste invite link or offline code"
                   className="w-full bg-void/60 border border-rib focus:border-amber/60 rounded-none px-3 py-2.5 text-bone font-mono text-sm placeholder:text-steel-light focus:outline-none transition-colors"
@@ -192,6 +223,17 @@ function HomePage() {
                 </p>
               </div>
             </div>
+
+            {/* Discord — lower priority */}
+            <a
+              href={DISCORD_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="bg-[#5865F2] hover:bg-[#4752c4] text-bone transition-colors font-pmono text-sm font-semibold uppercase tracking-[0.2em] px-5 py-3.5 flex items-center justify-center gap-3"
+            >
+              <DiscordIcon size={20} />
+              <span>Find Players on Discord</span>
+            </a>
           </div>
         </main>
 

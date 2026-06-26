@@ -141,6 +141,7 @@ function extractCodeFromUrl(text: string): string | null {
    phone's native camera (while online) opens the app straight into the
    join flow; the in-app scanner also reads the embedded code while fully
    offline. */
-export function inviteUrl(origin: string, match: OfflineMatch): string {
-  return `${origin}/lobby?join=${encodeMatch(match)}`;
+export function inviteUrl(origin: string, match: OfflineMatch, roomId?: string): string {
+  const base = `${origin}/lobby?join=${encodeMatch(match)}`;
+  return roomId ? `${base}&room=${roomId}` : base;
 }

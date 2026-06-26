@@ -12,15 +12,15 @@ export type ProfileButtonVariant =
 
 export interface ProfileButtonProps {
   variant?: ProfileButtonVariant;
-  /* Kept for backwards compat with existing call sites that still pass
-     showLabel; ignored — the button is always icon-only now. */
   showLabel?: boolean;
   className?: string;
+  onGiveUp?: () => void;
 }
 
 export function ProfileButton({
   variant = "dark",
   className = "",
+  onGiveUp,
 }: ProfileButtonProps) {
   const [open, setOpen] = useState(false);
 
@@ -42,7 +42,7 @@ export function ProfileButton({
       >
         <Settings size={16} strokeWidth={2.2} />
       </button>
-      <SettingsModal open={open} onClose={() => setOpen(false)} />
+      <SettingsModal open={open} onClose={() => setOpen(false)} onGiveUp={onGiveUp} />
     </>
   );
 }

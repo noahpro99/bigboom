@@ -30,10 +30,8 @@ import { ProfileButton } from "../ProfileButton";
 
 interface ManualViewProps {
   seed: number;
-  /* Which module types the bomb actually has. The manual filters its
-     pages to match so the Expert isn't reading rules for modules that
-     aren't on the bomb. Duplicate types collapse to a single page. */
   moduleTypes?: ModuleType[];
+  onGiveUp?: () => void;
 }
 
 /* Phase machine driving the page flip. Transitions are managed via
@@ -51,7 +49,7 @@ const EXIT_MS = 320;
 const ENTER_MS = 380;
 const SNAP_MS = 260;
 
-export function ManualView({ seed, moduleTypes }: ManualViewProps) {
+export function ManualView({ seed, moduleTypes, onGiveUp }: ManualViewProps) {
   const pages = generateManualPages(seed, moduleTypes);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -356,7 +354,7 @@ export function ManualView({ seed, moduleTypes }: ManualViewProps) {
                   </span>
                   <span className="flex items-center gap-3">
                     <span className="hidden sm:inline">§{selectedIdx + 1} of {pages.length}</span>
-                    <ProfileButton variant="light" showLabel={false} />
+                    <ProfileButton variant="light" showLabel={false} onGiveUp={onGiveUp} />
                   </span>
                 </header>
                 <hr className="ink-rule-hair max-w-3xl mx-auto" />

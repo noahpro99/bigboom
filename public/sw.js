@@ -13,7 +13,7 @@
  * Because offline mode is fully client-side and deterministic from the
  * seed, the first online visit primes the cache and every later visit
  * works with the radio off. */
-const CACHE = "bigboom-v2";
+const CACHE = "bigboom-v4";
 
 // Best-effort precache of the two entry pages + icon. addAll is allowed to
 // fail (e.g. behind auth or transient errors) without aborting install.
@@ -43,9 +43,17 @@ self.addEventListener("activate", (event) => {
 // Path patterns we treat as cacheable static assets.
 const ASSET_RE = /^\/(assets|_build|images|sounds)\//;
 const ASSET_EXT_RE = /\.(js|mjs|css|woff2?|ttf|otf|png|jpe?g|svg|gif|webp|ico|ogg|mp3|wav|webmanifest)$/i;
+// Vite dev-mode virtual modules — same stale-while-revalidate treatment so
+// the app shell works offline after the first online visit in dev too.
+// Note: /@react-refresh has no trailing slash, so we match on boundary.
+const VITE_RE = /^\/@(?:id|vite|fs|react-refresh)([/?]|$)/;
 
 function isAsset(url) {
-  return ASSET_RE.test(url.pathname) || ASSET_EXT_RE.test(url.pathname);
+  return (
+    ASSET_RE.test(url.pathname) ||
+    ASSET_EXT_RE.test(url.pathname) ||
+    VITE_RE.test(url.pathname)
+  );
 }
 
 self.addEventListener("fetch", (event) => {

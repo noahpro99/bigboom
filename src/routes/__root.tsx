@@ -26,7 +26,7 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "Cooperative bomb defusal. Two players. One survives. Procedurally generated puzzles.",
+          "Cooperative bomb defusal. Two players. One bomb. Procedurally generated puzzles.",
       },
       { name: "theme-color", content: "#050a14" },
       // PWA / installable + offline-capable
@@ -42,7 +42,7 @@ export const Route = createRootRoute({
       { property: "og:type", content: "website" },
       {
         property: "og:description",
-        content: "Cooperative bomb defusal. Two players. One survives.",
+        content: "Cooperative bomb defusal. Two players. One bomb.",
       },
       { property: "og:image", content: "/images/icon.png" },
       { name: "twitter:card", content: "summary" },

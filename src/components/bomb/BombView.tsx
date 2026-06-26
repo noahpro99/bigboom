@@ -330,15 +330,12 @@ function useServerBombActions(gameState: GameState): BombActions {
 
 interface BombViewProps {
   gameState: GameState;
-  /* True for spectators — they see the bomb but every interactive
-     control is gated through `disabled`. */
   readOnly?: boolean;
-  /* Offline play injects engine-backed actions here. When omitted, the
-     online server mutations are used. */
   actions?: BombActions;
+  onGiveUp?: () => void;
 }
 
-export function BombView({ gameState, readOnly = false, actions }: BombViewProps) {
+export function BombView({ gameState, readOnly = false, actions, onGiveUp }: BombViewProps) {
   const { game, modules } = gameState;
   const timeRemaining = useDisplayTime(
     game.startedAt,
@@ -430,8 +427,8 @@ export function BombView({ gameState, readOnly = false, actions }: BombViewProps
             <span>Telemetry · Live</span>
           </div>
           <span className="hidden md:inline">Defusal Bay · Unit 7</span>
-          <ProfileButton variant="dark" showLabel={false} className="sm:hidden" />
-          <ProfileButton variant="dark" className="hidden sm:flex" />
+          <ProfileButton variant="dark" showLabel={false} className="sm:hidden" onGiveUp={onGiveUp} />
+          <ProfileButton variant="dark" className="hidden sm:flex" onGiveUp={onGiveUp} />
         </div>
       </div>
 

@@ -1544,3 +1544,40 @@ export const trackResult = createServerFn({ method: "POST" })
     ]);
     return { ok: true as const };
   });
+
+/* Pre-game lobby presence — lightweight heartbeat so both players can see
+   each other before the bomb is armed. No game row required. */
+export const pingLobby = createServerFn({ method: "POST" })
+  .validator(
+    (data: { roomId: string; sessionId: string; role: string }) => data
+  )
+  .handler(async ({ data }) => {
+    const db = getDb();
+    db.run(
+      `INSERT INTO lobby_presence (room_id, session_id, role, last_seen)
+       VALUES (?, ?, ?, unixepoch())
+       ON CONFLICT(room_id, session_id)
+       DO UPDATE SET role = excluded.role, last_seen = excluded.last_seen`,
+      [data.roomId, data.sessionId, data.role]
+    );
+    return { ok: true as const };
+  });
+
+export const getLobbyPresence = createServerFn({ method: "GET" })
+  .validator((data: { roomId: string; sessionId: string }) => data)
+  .handler(async ({ data }) => {
+    const db = getDb();
+    const rows = db
+      .query(
+        `SELECT session_id, role
+         FROM lobby_presence
+         WHERE room_id = ? AND last_seen > unixepoch() - 15`
+      )
+      .all(data.roomId) as { session_id: string; role: string }[];
+    return {
+      players: rows.map((r) => ({
+        role: r.role,
+        isMe: r.session_id === data.sessionId,
+      })),
+    };
+  });

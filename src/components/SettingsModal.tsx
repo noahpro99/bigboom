@@ -38,22 +38,18 @@ import { getSessionId } from "../lib/session";
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+  onGiveUp?: () => void;
 }
 
 type Tab = "profile" | "audio" | "game";
 
-export function SettingsModal({ open, onClose }: SettingsModalProps) {
+export function SettingsModal({ open, onClose, onGiveUp }: SettingsModalProps) {
   const [tab, setTab] = useState<Tab>("profile");
 
-  /* Are we inside an ACTIVE game? The Game tab only makes sense when a
-     bomb is armed — hiding it in the lobby (status='waiting') and on the
-     game-over overlay (won/lost) prevents the "give up" path from
-     showing where it would either be premature or pointless. */
+  /* Offline games pass onGiveUp directly — no URL gameId exists for them.
+     Online games are detected via the route param + server status check. */
   const params = useParams({ strict: false }) as { gameId?: string };
   const gameId = params.gameId;
-  /* Piggy-back on the polling getGameState cache used by the game page;
-     SettingsModal lives on every page so we only enable the query when
-     we actually have a game id. */
   const { data: gameStatus } = useQuery({
     queryKey: ["game-status-for-settings", gameId],
     queryFn: async () => {
@@ -61,11 +57,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       const state = await getGameState({ data: { gameId } });
       return state?.game.status ?? null;
     },
-    enabled: !!gameId && open,
-    refetchInterval: open ? 2000 : false,
+    enabled: !!gameId && open && !onGiveUp,
+    refetchInterval: open && !onGiveUp ? 2000 : false,
     staleTime: 1500,
   });
-  const inGame = !!gameId && gameStatus === "active";
+  const inGame = !!onGiveUp || (!!gameId && gameStatus === "active");
 
   /* Close on Escape — common modal etiquette. */
   useEffect(() => {
@@ -186,7 +182,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           {tab === "profile" && <ProfileTab />}
           {tab === "audio" && <AudioTab />}
           {tab === "game" && inGame && (
-            <GameTab gameId={params.gameId!} onClose={onClose} />
+            <GameTab gameId={params.gameId} onClose={onClose} onGiveUp={onGiveUp} />
           )}
         </div>
       </div>
@@ -198,7 +194,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
 
 /* ---------- Game tab ---------- */
 
-function GameTab({ gameId, onClose }: { gameId: string; onClose: () => void }) {
+function GameTab({ gameId, onClose, onGiveUp }: { gameId?: string; onClose: () => void; onGiveUp?: () => void }) {
   const navigate = useNavigate();
   const [confirming, setConfirming] = useState(false);
   const giveUpMut = useMutation({
@@ -251,7 +247,12 @@ function GameTab({ gameId, onClose }: { gameId: string; onClose: () => void }) {
             <button
               onClick={() => {
                 play("explosion");
-                giveUpMut.mutate({ data: { gameId } });
+                if (onGiveUp) {
+                  onGiveUp();
+                  onClose();
+                } else if (gameId) {
+                  giveUpMut.mutate({ data: { gameId } });
+                }
               }}
               disabled={giveUpMut.isPending}
               className="flex-1 bg-crimson text-bone hover:bg-crimson-bright transition-colors py-2 font-stencil text-sm tracking-[0.22em] uppercase disabled:opacity-60"

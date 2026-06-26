@@ -92,6 +92,16 @@ export function getDb(): Database {
     );
     CREATE INDEX IF NOT EXISTS idx_game_results_preset_status
       ON game_results(preset, status);
+
+    CREATE TABLE IF NOT EXISTS lobby_presence (
+      room_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      last_seen INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY (room_id, session_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lobby_presence_room_seen
+      ON lobby_presence (room_id, last_seen);
   `);
 
   /* Idempotent migrations for the games table — CREATE TABLE IF NOT
