@@ -16,7 +16,7 @@ ENV PORT=3000
 ENV DB_PATH=/app/data/bigboom.sqlite
 
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package.json /app/bun.lock /app/serve.ts ./
+COPY --from=builder /app/package.json /app/bun.lock /app/serve.ts /app/ws-server.ts ./
 RUN bun install --frozen-lockfile --production
 
 EXPOSE 3000
