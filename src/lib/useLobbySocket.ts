@@ -23,18 +23,25 @@ export interface LobbyConfig {
   moduleTypes: ModuleType[];
 }
 
+export interface LobbyStart {
+  gameId: string;
+  startedAt: number;
+}
+
 export function useLobbySocket({
   roomId,
   sessionId,
   role,
   onPlayers,
   onConfig,
+  onStart,
 }: {
   roomId: string;
   sessionId: string;
   role: string;
   onPlayers: (p: LobbyPlayer[]) => void;
   onConfig: (c: LobbyConfig) => void;
+  onStart?: (s: LobbyStart) => void;
 }) {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -44,8 +51,10 @@ export function useLobbySocket({
   // Keep callbacks fresh without triggering reconnect.
   const onPlayersRef = useRef(onPlayers);
   const onConfigRef = useRef(onConfig);
+  const onStartRef = useRef(onStart);
   useEffect(() => { onPlayersRef.current = onPlayers; }, [onPlayers]);
   useEffect(() => { onConfigRef.current = onConfig; }, [onConfig]);
+  useEffect(() => { onStartRef.current = onStart; }, [onStart]);
 
   useEffect(() => {
     if (!roomId || !sessionId || typeof window === "undefined") return;
@@ -72,6 +81,12 @@ export function useLobbySocket({
             const msg = JSON.parse(e.data) as { type: string } & Record<string, unknown>;
             if (msg.type === "players") onPlayersRef.current(msg.players as LobbyPlayer[]);
             if (msg.type === "config") onConfigRef.current(msg as unknown as LobbyConfig);
+            if (msg.type === "start") {
+              onStartRef.current?.({
+                gameId: String(msg.gameId ?? ""),
+                startedAt: Number(msg.startedAt ?? 0),
+              });
+            }
           } catch {}
         };
 
@@ -120,5 +135,12 @@ export function useLobbySocket({
     }
   }, []);
 
-  return { connected, sendConfig };
+  const sendStart = useCallback((s: LobbyStart) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "start", ...s }));
+    }
+  }, []);
+
+  return { connected, sendConfig, sendStart };
 }

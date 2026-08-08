@@ -154,11 +154,15 @@ function spawnModules(seed: number, moduleTypes: ModuleType[]): Module[] {
 export function createOfflineGame(
   match: OfflineMatch,
   role: PlayerRole,
-  gameId = "offline"
+  gameId = "offline",
+  startedAt?: number
 ): GameState {
   const serial = generateSerialNumber(match.seed);
   const modules = spawnModules(match.seed, match.moduleTypes);
-  const now = Math.floor(Date.now() / 1000);
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Optional startedAt lets a co-op host broadcast the same anchor to their
+  // partner so both timers count down from the same second.
+  const anchor = typeof startedAt === "number" ? startedAt : nowSec;
   return {
     game: {
       id: gameId,
@@ -166,14 +170,14 @@ export function createOfflineGame(
       serial,
       status: "active",
       timerSeconds: match.timerSeconds,
-      startedAt: now,
+      startedAt: anchor,
       strikes: 0,
       maxStrikes: MAX_STRIKES,
-      createdAt: now,
+      createdAt: nowSec,
       preset: match.preset,
       moduleTypes: match.moduleTypes,
     },
-    players: [{ role, joinedAt: now, username: null, isMe: true }],
+    players: [{ role, joinedAt: nowSec, username: null, isMe: true }],
     modules,
     timeRemaining: match.timerSeconds,
     myRole: role,

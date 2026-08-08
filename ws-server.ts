@@ -79,6 +79,23 @@ export const wsHandler = {
         for (const [sid, w] of room.players.entries()) {
           if (sid !== sessionId) try { w.send(out); } catch {}
         }
+        return;
+      }
+
+      // Host clicked "Arm & Play". Relay the shared { gameId, startedAt }
+      // to everyone else in the room so their lobbies enter play at the
+      // same anchor time (timers agree).
+      if (msg.type === "start") {
+        const room = rooms.get(roomId);
+        if (!room) return;
+        const out = JSON.stringify({
+          type: "start",
+          gameId: msg.gameId,
+          startedAt: msg.startedAt,
+        });
+        for (const [sid, w] of room.players.entries()) {
+          if (sid !== sessionId) try { w.send(out); } catch {}
+        }
       }
     } catch {}
   },

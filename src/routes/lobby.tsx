@@ -149,9 +149,16 @@ function LobbyPage() {
     return () => setInGame(false);
   }, [phase, game?.game.status]);
 
-  function startMatch(m: OfflineMatch, r: PlayerRole) {
-    const id = newRoomId();
-    const fresh = createOfflineGame(m, r, id);
+  /* Start a match. If `sync` is provided the game uses that shared
+     gameId + startedAt so a partner who received the WS "start" enters
+     play at the same anchor and timers agree. */
+  function startMatch(
+    m: OfflineMatch,
+    r: PlayerRole,
+    sync?: { gameId: string; startedAt: number }
+  ) {
+    const id = sync?.gameId ?? newRoomId();
+    const fresh = createOfflineGame(m, r, id, sync?.startedAt);
     setMatch(m);
     setRole(r);
     setGameId(id);
@@ -165,6 +172,7 @@ function LobbyPage() {
     // Optimistic, best-effort: register the lobby online if we can. Never
     // blocks — if it fails or we're offline, the game plays on regardless.
     reportLobby(id, fresh.game.serial, m);
+    return { id, startedAt: fresh.game.startedAt! };
   }
 
   const updateGame = useCallback(
@@ -230,7 +238,7 @@ function LobbyPage() {
           initialMatch={match}
           joinedFromLink={!!join && !!match}
           roomFromUrl={roomFromUrl}
-          onStart={startMatch}
+          onStart={(m, r, sync) => startMatch(m, r, sync)}
         />
       </div>
     </div>
@@ -367,7 +375,11 @@ function LobbyScreen({
   initialMatch: OfflineMatch | null;
   joinedFromLink: boolean;
   roomFromUrl?: string;
-  onStart: (m: OfflineMatch, r: PlayerRole) => void;
+  onStart: (
+    m: OfflineMatch,
+    r: PlayerRole,
+    sync?: { gameId: string; startedAt: number }
+  ) => { id: string; startedAt: number };
 }) {
   const base = PRESET_CONFIGS.standard;
 
@@ -438,7 +450,15 @@ function LobbyScreen({
   const configRef = useRef({ seed, timerSeconds, moduleTypes });
   useEffect(() => { configRef.current = { seed, timerSeconds, moduleTypes }; });
 
-  const { connected, sendConfig } = useLobbySocket({
+  /* Refs so the WS callbacks (installed once) always see the latest role +
+     match without re-installing the socket. `startedRef` guards against a
+     double-start if we fired our own local start and also get the echo. */
+  const roleRef = useRef(role);
+  useEffect(() => { roleRef.current = role; }, [role]);
+  const matchRef = useRef<OfflineMatch | null>(null);
+  const startedRef = useRef(false);
+
+  const { connected, sendConfig, sendStart } = useLobbySocket({
     roomId,
     sessionId,
     role,
@@ -446,6 +466,16 @@ function LobbyScreen({
     // Guest receives config from host via WS and auto-applies it.
     onConfig: (cfg) => {
       if (joined) applyMatch(normalizeMatch(cfg));
+    },
+    // Partner clicked "Arm & Play". Enter play at the same anchor so timers
+    // agree. The server relays start-messages only to OTHER sessions in the
+    // room, so we won't get our own back — but keep the guard anyway.
+    onStart: (sync) => {
+      if (startedRef.current) return;
+      startedRef.current = true;
+      const m = matchRef.current;
+      if (!m) return;
+      onStart(m, roleRef.current, sync);
     },
   });
 
@@ -481,6 +511,9 @@ function LobbyScreen({
     () => normalizeMatch({ seed, timerSeconds, moduleTypes }),
     [seed, timerSeconds, moduleTypes]
   );
+  // Keep the ref fresh so the WS onStart callback (installed once) can
+  // build the game from the latest match without reinstalling the socket.
+  useEffect(() => { matchRef.current = match; }, [match]);
   const code = encodeMatch(match);
   const origin =
     typeof window !== "undefined" ? window.location.origin : "https://bigboom.app";
@@ -738,7 +771,14 @@ function LobbyScreen({
       {/* Start */}
       <div className="p-5">
         <button
-          onClick={() => onStart(match, role)}
+          onClick={() => {
+            if (startedRef.current) return;
+            startedRef.current = true;
+            const { id, startedAt } = onStart(match, role);
+            // Broadcast to anyone else in the room so their lobbies start
+            // simultaneously on the same anchor.
+            sendStart({ gameId: id, startedAt });
+          }}
           disabled={moduleTypes.length === 0}
           className={`w-full px-6 py-4 font-stencil text-xl uppercase tracking-[0.2em] transition-all flex items-center justify-between ${
             moduleTypes.length === 0
