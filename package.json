@@ -2,10 +2,10 @@
   "name": "bigboom",
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
+    "dev": "bun --bun ./node_modules/vite/bin/vite.js dev",
+    "build": "bun --bun ./node_modules/vite/bin/vite.js build",
     "start": "bun serve.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "bun --bun ./node_modules/typescript/lib/tsc.js --noEmit"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",
