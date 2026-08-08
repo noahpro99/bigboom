@@ -158,6 +158,9 @@ function LobbyPage() {
     setGame(fresh);
     setPhase("play");
     saveGame({ gameState: fresh, match: m, role: r, gameId: id });
+    // Once the game is armed the lobby snapshot is stale — clear it so a
+    // future /lobby visit starts fresh.
+    clearPersistedLobby();
     play("menuButton");
     // Optimistic, best-effort: register the lobby online if we can. Never
     // blocks — if it fails or we're offline, the game plays on regardless.
@@ -315,6 +318,46 @@ function RolePicker({
    else's code — by scanning or pasting — the config locks to their bomb
    and you just pick a role + start. The Share QR is generated client-side,
    so it works with no connection. */
+/* Per-tab lobby state persistence. Reloads (accidental or intentional)
+   used to wipe the roomId, seed, config, and role — leaving the host in
+   a fresh room while their partner was stranded in the old one. Now we
+   snapshot the whole lobby into sessionStorage and re-hydrate on mount. */
+const LOBBY_STATE_KEY = "bigboom-lobby-state";
+interface PersistedLobby {
+  roomId: string;
+  seed: number;
+  preset: Preset;
+  timerSeconds: number;
+  moduleTypes: ModuleType[];
+  role: PlayerRole;
+  joined: boolean;
+}
+function loadPersistedLobby(): PersistedLobby | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(LOBBY_STATE_KEY);
+    return raw ? (JSON.parse(raw) as PersistedLobby) : null;
+  } catch {
+    return null;
+  }
+}
+function persistLobby(s: PersistedLobby) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(LOBBY_STATE_KEY, JSON.stringify(s));
+  } catch {
+    /* ignore */
+  }
+}
+function clearPersistedLobby() {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(LOBBY_STATE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 function LobbyScreen({
   initialMatch,
   joinedFromLink,
@@ -327,6 +370,7 @@ function LobbyScreen({
   onStart: (m: OfflineMatch, r: PlayerRole) => void;
 }) {
   const base = PRESET_CONFIGS.standard;
+
   const [seed, setSeed] = useState<number>(() => initialMatch?.seed ?? randomSeed());
   const [preset, setPreset] = useState<Preset>(initialMatch?.preset ?? base.preset);
   const [timerSeconds, setTimerSeconds] = useState<number>(
@@ -343,9 +387,49 @@ function LobbyScreen({
   const [copied, setCopied] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
 
-  // Stable room ID for pre-game presence. Host generates one; joiner gets
-  const [roomId] = useState<string>(() => roomFromUrl ?? newRoomId());
+  /* Stable room ID for pre-game presence. Host generates one; joiner gets
+     it from the URL. Persisted rehydration in the effect below will
+     override this on reload so the same tab lands back in the same room. */
+  const [roomId, setRoomId] = useState<string>(
+    () => roomFromUrl ?? newRoomId()
+  );
   const sessionId = typeof window !== "undefined" ? getSessionId() : "";
+
+  /* Rehydrate from sessionStorage on mount. Runs AFTER useState so no
+     SSR/client hydration mismatch (SSR gets the pristine default DOM;
+     the client overwrites state once mounted). A fresh invite URL or a
+     just-passed match always wins over the snapshot. */
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+    if (joinedFromLink || initialMatch) return; // URL wins over cache
+    const p = loadPersistedLobby();
+    if (!p) return;
+    setSeed(p.seed);
+    setPreset(p.preset);
+    setTimerSeconds(p.timerSeconds);
+    setModuleTypes(p.moduleTypes);
+    setJoined(p.joined);
+    setRole(p.role);
+    setRoomId(p.roomId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist the lobby snapshot whenever anything meaningful changes so a
+  // page reload lands you back in the same room with the same config/role.
+  useEffect(() => {
+    if (!hydratedRef.current) return; // skip pre-hydration
+    persistLobby({
+      roomId,
+      seed,
+      preset,
+      timerSeconds,
+      moduleTypes,
+      role,
+      joined,
+    });
+  }, [roomId, seed, preset, timerSeconds, moduleTypes, role, joined]);
 
   // WS-based presence — only shown when connected.
   const [presencePlayers, setPresencePlayers] = useState<LobbyPlayer[]>([]);
@@ -364,6 +448,26 @@ function LobbyScreen({
       if (joined) applyMatch(normalizeMatch(cfg));
     },
   });
+
+  /* If we land in a room where our default role is already taken by
+     someone else (typical case: host is already Expert, guest joins via
+     link which also defaults to Expert), silently flip to the other role
+     the FIRST time we hear presence. After that, the player's choices are
+     sticky — no more auto-swaps. */
+  const autoSwappedRef = useRef(false);
+  useEffect(() => {
+    if (autoSwappedRef.current) return;
+    if (!connected || presencePlayers.length < 2) return;
+    const others = presencePlayers.filter((p) => !p.isMe);
+    const conflict = others.some((p) => p.role === role);
+    if (!conflict) {
+      autoSwappedRef.current = true; // no swap needed; lock in
+      return;
+    }
+    const swap: PlayerRole = role === "defuser" ? "expert" : "defuser";
+    setRole(swap);
+    autoSwappedRef.current = true;
+  }, [connected, presencePlayers, role]);
 
   // When the WS first connects, push the current config so the guest
   // immediately sees the host's settings even if they joined mid-session.
