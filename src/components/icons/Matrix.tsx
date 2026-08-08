@@ -1,11 +1,11 @@
-import { siDiscord } from "simple-icons";
+import { siMatrix } from "simple-icons";
 
-interface DiscordIconProps {
+interface MatrixIconProps {
   size?: number;
   className?: string;
 }
 
-export function DiscordIcon({ size = 20, className }: DiscordIconProps) {
+export function MatrixIcon({ size = 20, className }: MatrixIconProps) {
   return (
     <svg
       role="img"
@@ -14,9 +14,9 @@ export function DiscordIcon({ size = 20, className }: DiscordIconProps) {
       height={size}
       fill="currentColor"
       className={className}
-      aria-label="Discord"
+      aria-label="Matrix"
     >
-      <path d={siDiscord.path} />
+      <path d={siMatrix.path} />
     </svg>
   );
 }

@@ -5,13 +5,13 @@ import { decodeMatch, encodeMatch } from "../lib/offlineCode";
 import { ProfileButton } from "../components/ProfileButton";
 import { QrScanner } from "../components/offline/QrScanner";
 import { Bomb, ArrowRight, Link2, AlertTriangle, ScanLine } from "lucide-react";
-import { DiscordIcon } from "../components/icons/Discord";
+import { MatrixIcon } from "../components/icons/Matrix";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
 });
 
-const DISCORD_URL = "https://discord.gg/bigboom";
+const MATRIX_URL = "https://matrix.to/#/#bigboom:matrix.org";
 
 function parseInviteLink(input: string): string | null {
   const trimmed = input.trim();
@@ -224,15 +224,15 @@ function HomePage() {
               </div>
             </div>
 
-            {/* Discord — lower priority */}
+            {/* Matrix community — lower priority */}
             <a
-              href={DISCORD_URL}
+              href={MATRIX_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="bg-[#5865F2] hover:bg-[#4752c4] text-bone transition-colors font-pmono text-sm font-semibold uppercase tracking-[0.2em] px-5 py-3.5 flex items-center justify-center gap-3"
+              className="bg-[#0dbd8b] hover:bg-[#0aa073] text-void transition-colors font-pmono text-sm font-semibold uppercase tracking-[0.2em] px-5 py-3.5 flex items-center justify-center gap-3"
             >
-              <DiscordIcon size={20} />
-              <span>Find Players on Discord</span>
+              <MatrixIcon size={20} />
+              <span>Find Players on Matrix</span>
             </a>
           </div>
         </main>

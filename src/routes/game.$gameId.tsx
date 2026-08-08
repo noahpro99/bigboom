@@ -581,7 +581,7 @@ function LobbyView({
 
           {/* Notice */}
           <div className="p-5 border-b border-rib/60 text-[11px] font-mono text-bone-dim/80 leading-relaxed">
-            Talk to your partner over voice — Discord, phone, or in person. The game has no in-game chat: the Defuser describes the bomb, the Expert reads the manual aloud.
+            Talk to your partner over voice — Matrix, phone, or in person. The game has no in-game chat: the Defuser describes the bomb, the Expert reads the manual aloud.
           </div>
 
           {/* Start */}
